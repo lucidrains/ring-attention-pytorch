@@ -2,6 +2,8 @@
 
 Explorations into Ring Attention, from Liu et al. at Berkeley AI
 
+It basically applies ring reduce to the processing of the tiles of the attention matrix.
+
 ## Citations
 
 ```bibtex
