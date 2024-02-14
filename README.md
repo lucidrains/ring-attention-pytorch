@@ -1,4 +1,4 @@
-## Ring Attention - Pytorch
+## Ring Attention - Pytorch (wip)
 
 Explorations into Ring Attention, from Liu et al. at Berkeley AI
 
