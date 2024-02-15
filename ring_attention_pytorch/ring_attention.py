@@ -1,5 +1,6 @@
 import torch
 from torch import nn, einsum
+import torch.distributed as dist
 from torch.nn import Module, ModuleList
 
 from einops import rearrange
