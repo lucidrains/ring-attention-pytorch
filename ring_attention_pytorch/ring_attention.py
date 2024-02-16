@@ -3,6 +3,7 @@ from functools import lru_cache
 import torch
 from torch import nn
 from torch.nn import Module, ModuleList
+from torch.autograd import Function
 import torch.distributed as dist
 
 import einx
@@ -45,6 +46,35 @@ def circular_rank_right(rank = None, ring_size = None):
     rank = default(rank, get_rank())
     ring_size = default(ring_size, get_world_size())
     return circular_index_right(rank, ring_size)
+
+# one ring pass
+
+class OneRingPass(Function):
+    """ one ring pass to the right - assume tensor is all same shape for now """
+
+    @staticmethod
+    def forward(ctx, x):
+        receiving_buffer = torch.zeros_like(x)
+
+        send_request = dist.isend(x, circular_rank_right())
+        dist.recv(receiving_buffer, circular_index_left())
+
+        send_request.wait()
+        dist.barrier()
+
+        return receiving_buffer
+
+    @staticmethod
+    def backward(ctx, grads):
+        receiving_buffer = torch.zeros_like(grads)
+
+        send_request = dist.isend(grads, circular_rank_left())
+        dist.recv(receiving_buffer, circular_index_right())
+
+        send_request.wait()
+        dist.barrier()
+
+        return receiving_buffer
 
 # main class
 
