@@ -16,7 +16,7 @@ setup(
     'distributed attention'
   ],
   install_requires=[
-    'einops>=0.7.0',
+    'einx[torch]>=0.1.3',
     'torch>=2.0'
   ],
   classifiers=[
