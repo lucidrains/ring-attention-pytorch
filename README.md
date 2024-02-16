@@ -13,6 +13,8 @@ I think it is possible this is being used for the 1-10 million tokens for the la
 - [ ] make it work with derived causal mask based on rank and chunk sizes
 - [ ] modify flash attention to output intermediates and figure out backwards with recompute and ring passes
 - [ ] figure out striped attention
+- [ ] figure out batch_isend_irecv
+- [ ] cross attention
 
 ## Citations
 
