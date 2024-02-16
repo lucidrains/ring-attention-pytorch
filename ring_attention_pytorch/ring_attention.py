@@ -49,31 +49,26 @@ def circular_rank_right(rank = None, ring_size = None):
 
 # one ring pass
 
+def send_and_receive_(x, receive_buffer, send_to_rank, receive_from_rank):
+    send_request = dist.isend(x, send_to_rank)
+    dist.recv(receiving_buffer, receive_from_rank)
+
+    send_request.wait()
+    dist.barrier()
+
 class OneRingPass(Function):
     """ one ring pass to the right - assume tensor is all same shape for now """
 
     @staticmethod
     def forward(ctx, x):
         receiving_buffer = torch.zeros_like(x)
-
-        send_request = dist.isend(x, circular_rank_right())
-        dist.recv(receiving_buffer, circular_index_left())
-
-        send_request.wait()
-        dist.barrier()
-
+        send_and_receive_(x, receive_buffer, circular_rank_right(), circular_rank_left())
         return receiving_buffer
 
     @staticmethod
     def backward(ctx, grads):
         receiving_buffer = torch.zeros_like(grads)
-
-        send_request = dist.isend(grads, circular_rank_left())
-        dist.recv(receiving_buffer, circular_index_right())
-
-        send_request.wait()
-        dist.barrier()
-
+        send_and_receive_(grads, receive_buffer, circular_rank_left(), circular_rank_right())
         return receiving_buffer
 
 # main class
