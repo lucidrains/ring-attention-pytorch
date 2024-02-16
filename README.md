@@ -4,6 +4,8 @@ Explorations into Ring Attention, from Liu et al. at Berkeley AI
 
 It basically applies ring reduce to the processing of the tiles of the attention matrix, flash attention style.
 
+I think it is possible this is being used for the 1-10 million tokens for the latest Gemini. At least some form of it.
+
 ## Todo
 
 - [ ] functions for splitting the sequence evenly among ranks, either within attention function, or in the external ring transformer wrapper
