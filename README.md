@@ -27,3 +27,21 @@ It basically applies ring reduce to the processing of the tiles of the attention
     url     = {https://api.semanticscholar.org/CorpusID:265220849}
 }
 ```
+
+```bibtex
+@article{Dao2022FlashAttentionFA,
+    title   = {FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness},
+    author  = {Tri Dao and Daniel Y. Fu and Stefano Ermon and Atri Rudra and Christopher R'e},
+    journal = {ArXiv},
+    year    = {2022},
+    volume  = {abs/2205.14135}
+}
+```
+
+```bibtex
+@article{dao2023flashattention2,
+  title     = {Flash{A}ttention-2: Faster Attention with Better Parallelism and Work Partitioning,
+  author    = {Dao, Tri},
+  year      = {2023}
+}
+```
