@@ -5,7 +5,8 @@ from torch.autograd import Function
 
 import torch.distributed as dist
 
-from einops import rearrange, pack, unpack
+import einx
+from einx import rearrange
 
 def exists(val):
     return val is not None
@@ -55,8 +56,7 @@ def all_gather_variable_dim(t, dim = 0, sizes = None):
     gathered_tensors = torch.cat(gathered_tensors, dim = dim)
     seq = torch.arange(max_size, device = device)
 
-    mask = rearrange(seq, 'j -> 1 j') < rearrange(sizes, 'i -> i 1')
-    mask = rearrange(mask, 'i j -> (i j)')
+    mask = einx.less('j, i -> (i j)', seq, sizes)
     seq = torch.arange(mask.shape[-1], device = device)
     indices = seq[mask]
 
@@ -103,7 +103,7 @@ class SplitByRankFunction(Function):
 
     @staticmethod
     def backward(ctx, grads, _):
-        grads = rearrange(grads, '... -> 1 ...')
+        grads = rearrange('... -> 1 ...', grads)
         grads = all_gather_variable_dim(grads, sizes = ctx.sizes)
         return grads
 
