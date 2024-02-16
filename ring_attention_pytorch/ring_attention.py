@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 import torch
 from torch import nn
 from torch.nn import Module, ModuleList
@@ -14,6 +16,16 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
+# distributed globals
+
+@lru_cache(maxsize = None)
+def get_rank():
+    return dist.get_rank() if dist.is_initialized() else 0
+
+@lru_cache(maxsize = None)
+def get_world_size():
+    return dist.get_world_size() if dist.is_initialized() else 1
+
 # ring functions
 
 def circular_index_left(pos, ring_size):
@@ -25,13 +37,13 @@ def circular_index_right(pos, ring_size):
 # distributed ring
 
 def circular_rank_left(rank = None, ring_size = None):
-    rank = default(rank, dist.get_rank())
-    ring_size = default(ring_size, dist.get_world_size())
+    rank = default(rank, get_rank())
+    ring_size = default(ring_size, get_world_size())
     return circular_index_left(rank, ring_size)
 
 def circular_rank_right(rank = None, ring_size = None):
-    rank = default(rank, dist.get_rank())
-    ring_size = default(ring_size, dist.get_world_size())
+    rank = default(rank, get_rank())
+    ring_size = default(ring_size, get_world_size())
     return circular_index_right(rank, ring_size)
 
 # main class
