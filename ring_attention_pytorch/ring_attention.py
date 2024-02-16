@@ -14,6 +14,26 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
+# ring functions
+
+def circular_index_left(pos, ring_size):
+    return ((pos - 1) + ring_size) % ring_size
+
+def circular_index_right(pos, ring_size):
+    return (pos + 1) % ring_size
+
+# distributed ring
+
+def circular_rank_left(rank = None, ring_size = None):
+    rank = default(rank, dist.get_rank())
+    ring_size = default(ring_size, dist.get_world_size())
+    return circular_index_left(rank, ring_size)
+
+def circular_rank_right(rank = None, ring_size = None):
+    rank = default(rank, dist.get_rank())
+    ring_size = default(ring_size, dist.get_world_size())
+    return circular_index_right(rank, ring_size)
+
 # main class
 
 class RingAttention(Module):
@@ -65,6 +85,7 @@ class RingAttention(Module):
             i, j = sim.shape[-2:]
             causal_mask = torch.ones((i, j), dtype = torch.bool).triu(j - i + 1)
             sim = einx.where('i j, , b h i j -> b h i j', causal_mask, mask_value, sim)
+
         elif exists(mask):
             sim = einx.where('b j, b h i j, -> b h i j', mask, sim, mask_value)
 
