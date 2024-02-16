@@ -1,10 +1,11 @@
 import math
-import torch
 from functools import partial
+
+import torch
 from torch import nn, einsum
 from torch.autograd.function import Function
 
-from einops import rearrange
+import einx
 
 # constants
 
@@ -43,7 +44,7 @@ class FlashAttentionFunction(Function):
         num_col_tiles = math.ceil(k.shape[-2] / k_bucket_size)
 
         if exists(mask) and mask.ndim == 2:
-            mask = rearrange(mask, 'b n -> b 1 1 n')
+            mask = rearrange('b n -> b 1 1 n', mask)
 
         if not exists(mask):
             col_masks = (None,) * num_col_tiles
@@ -176,3 +177,5 @@ class FlashAttentionFunction(Function):
                 dvc.add_(dv_chunk)
 
         return dq, dk, dv, None, None, None, None
+
+flash_attn = FlashAttentionFunction.apply
