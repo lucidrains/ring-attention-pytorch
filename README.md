@@ -2,7 +2,15 @@
 
 Explorations into Ring Attention, from Liu et al. at Berkeley AI
 
-It basically applies ring reduce to the processing of the tiles of the attention matrix.
+It basically applies ring reduce to the processing of the tiles of the attention matrix, flash attention style.
+
+## Todo
+
+- [ ] functions for splitting the sequence evenly among ranks, either within attention function, or in the external ring transformer wrapper
+- [ ] basic test case with rank of 1 and 4 and check for equivalent output
+- [ ] make it work with derived causal mask based on rank and chunk sizes
+- [ ] modify flash attention to output intermediates and figure out backwards with recompute and ring passes
+- [ ] figure out striped attention
 
 ## Citations
 
