@@ -94,14 +94,14 @@ def null_ring_pass(*tensors):
 
 def all_ring_pass(*tensors):
     num_passes = 0
-    curr_rank = get_rank()
+    rank = get_rank()
     world_size = get_world_size()
 
     while num_passes < world_size:
 
-        curr_rank = (curr_rank + num_passes) % world_size
+        curr_ring_pos = (rank + num_passes) % world_size
 
-        yield curr_rank, tuple(tensors)
+        yield curr_ring_pos, tuple(tensors)
 
         num_passes += 1
 

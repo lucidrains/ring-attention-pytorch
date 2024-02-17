@@ -7,7 +7,8 @@ from einx import rearrange
 
 from ring_attention_pytorch.ring import (
     all_ring_pass,
-    is_distributed
+    is_distributed,
+    get_rank
 )
 
 # helper functions
