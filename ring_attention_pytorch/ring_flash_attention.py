@@ -26,6 +26,16 @@ def exists(val):
 def default(val, d):
     return val if exists(val) else d
 
+def none_iterator():
+    while True:
+        yield None
+
+def maybe_split(t, size, dim = -2):
+    if not exists(t):
+        return none_iterator()
+
+    return t.chunk(size, dim = dim)
+
 # ring + (flash) attention forwards and backwards
 
 # flash attention v1 - https://arxiv.org/abs/2205.14135
@@ -66,15 +76,11 @@ class RingFlashAttentionFunction(Function):
         num_row_tiles = math.ceil(q.shape[-2] / q_bucket_size)
         num_col_tiles = math.ceil(k.shape[-2] / k_bucket_size)
 
-        if exists(mask) and mask.ndim == 2:
-            mask = rearrange('b n -> b 1 1 n', mask)
+        if exists(mask):
+            if mask.ndim == 2:
+                mask = rearrange('b n -> b 1 1 n', mask)
 
-        if not exists(mask):
-            col_masks = (None,) * num_col_tiles
-            mask = (col_masks,) * num_row_tiles 
-        else:
             mask = ((mask,) * num_row_tiles) if mask.shape[-2] == 1 else mask.split(q_bucket_size, dim = -2)
-            mask = tuple(((row_mask,) * num_col_tiles) if row_mask.shape[-1] == 1 else row_mask.split(k_bucket_size, dim = -1) for row_mask in mask)
 
         row_splits = zip(
             q.split(q_bucket_size, dim = -2),
@@ -87,14 +93,14 @@ class RingFlashAttentionFunction(Function):
         for ind, (qc, oc, row_mask, row_sums, row_maxes) in enumerate(row_splits):
             q_start_index = ind * q_bucket_size - qk_len_diff
 
-            for ring_rank, (k, v) in ring_pass_fn(k, v):
+            for ring_rank, (k, v, row_mask) in ring_pass_fn(k, v, row_mask):
 
                 per_machine_col_offset = ring_rank * per_machine_col_size
 
                 col_splits = zip(
                     k.split(k_bucket_size, dim = -2),
                     v.split(k_bucket_size, dim = -2),
-                    row_mask
+                    maybe_split(row_mask, k_bucket_size, dim = -1)
                 )
 
                 for k_ind, (kc, vc, col_mask) in enumerate(col_splits):
@@ -171,7 +177,7 @@ class RingFlashAttentionFunction(Function):
         for ind, (qc, oc, doc, row_mask, lsec, dqc) in enumerate(row_splits):
             q_start_index = ind * q_bucket_size - qk_len_diff
 
-            for ring_rank, (k, v, dk, dv) in ring_pass_fn(k, v, dk, dv):
+            for ring_rank, (k, v, row_mask, dk, dv) in ring_pass_fn(k, v, row_mask, dk, dv):
 
                 per_machine_col_offset = ring_rank * per_machine_col_size
 
@@ -180,7 +186,7 @@ class RingFlashAttentionFunction(Function):
                     v.split(k_bucket_size, dim = -2),
                     dk.split(k_bucket_size, dim = -2),
                     dv.split(k_bucket_size, dim = -2),
-                    row_mask
+                    maybe_split(row_mask, k_bucket_size, dim = -1)
                 )
 
                 for k_ind, (kc, vc, dkc, dvc, col_mask) in enumerate(col_splits):
