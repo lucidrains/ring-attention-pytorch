@@ -91,10 +91,14 @@ one_ring_pass = OneRingPass.apply
 
 def all_ring_pass(*tensors):
     num_passes = 0
+    curr_rank = get_rank()
+    world_size = get_world_size()
 
     while num_passes < get_world_size():
 
-        yield tuple(tensors)
+        curr_rank = (curr_rank + num_passes) % world_size
+
+        yield curr_rank, tuple(tensors)
 
         num_passes += 1
 
@@ -175,11 +179,22 @@ class RingAttention(Module):
             row_sums = torch.zeros((*q.shape[:-1], 1), device = device)
             row_maxes = torch.full((*q.shape[:-1], 1), mask_value, device = device)
 
-            for k, v, mask in all_ring_pass(k, v, mask):
+            row_chunk_size = q.shape[-2]
+            col_chunk_size = k.shape[-2]
+            row_offset = get_rank() * row_chunk_size
+
+            for ring_rank, (k, v, mask) in all_ring_pass(k, v, mask):
+
+                col_offset = col_chunk_size * ring_rank
 
                 attn_weights = einx.dot('... i d, ... j d -> ... i j', q, k)
 
-                if exists(mask):
+                if self.causal:
+                    i, j = attn_weights.shape[-2:]
+                    causal_mask = torch.ones((i, j), dtype = torch.bool).triu(j - i + row_offset - col_offset + 1)
+                    attn_weights = einx.where('i j, b h i j, -> b h i j', causal_mask, attn_weights, mask_value)
+
+                elif exists(mask):
                     attn_weights = einx.where('b j, b h i j, -> b h i j', mask, attn_weights, mask_value)
 
                 block_row_maxes = attn_weights.amax(dim = -1, keepdims = True)
@@ -187,7 +202,9 @@ class RingAttention(Module):
 
                 exp_weights = torch.exp(attn_weights - new_row_maxes)
 
-                if exists(mask):
+                if self.causal:
+                    exp_weights = einx.where('i j, b h i j,', causal_mask, exp_weights, 0.)
+                elif exists(mask):
                     exp_weights = einx.where('b j, b h i j,', mask, exp_weights, 0.)
 
                 block_row_sums = exp_weights.sum(dim = -1, keepdims = True).clamp(min = self.eps)
