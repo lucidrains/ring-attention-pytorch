@@ -12,13 +12,14 @@ I believe this is being used for the 1-10 million tokens for the latest Gemini. 
 
 ## Todo
 
+- [x] make it work with derived causal mask based on rank and chunk sizes
 - [ ] functions for splitting the sequence evenly among ranks, either within attention function, or in the external ring transformer wrapper
 - [ ] basic test case with rank of 1 and 4 and check for equivalent output
-- [ ] make it work with derived causal mask based on rank and chunk sizes
-- [ ] modify flash attention to output intermediates and figure out backwards with recompute and ring passes
+- [ ] modify flash attention to output intermediates and figure out backwards with recompute (saved tensors will also need to be ring passed)
 - [ ] figure out striped attention
 - [ ] figure out batch_isend_irecv
 - [ ] cross attention
+- [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 
 ## Citations
 
