@@ -11,7 +11,8 @@ import einx
 from ring_attention_pytorch.ring import (
     all_ring_pass,
     null_ring_pass,
-    one_ring_pass
+    one_ring_pass,
+    get_rank
 )
 
 # constants
@@ -61,7 +62,12 @@ class RingFlashAttentionFunction(Function):
 
         orig_k, orig_v, device = k, v, q.device
 
+        row_ring_rank = get_rank() if ring_reduce_col else 0
+        per_machine_row_size = q.shape[-2]
         per_machine_col_size = k.shape[-2]
+
+        rank_row_offset = row_ring_rank * per_machine_row_size
+
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
 
         max_neg_value = -torch.finfo(q.dtype).max
@@ -91,7 +97,7 @@ class RingFlashAttentionFunction(Function):
         )
 
         for ind, (qc, oc, row_mask, row_sums, row_maxes) in enumerate(row_splits):
-            q_start_index = ind * q_bucket_size - qk_len_diff
+            q_start_index = ind * q_bucket_size + rank_row_offset - qk_len_diff
 
             for ring_rank, (k, v, row_mask) in ring_pass_fn(k, v, row_mask):
 
@@ -153,7 +159,12 @@ class RingFlashAttentionFunction(Function):
         causal, scale, mask, q_bucket_size, k_bucket_size, ring_reduce_col = ctx.args
         q, k, v, o, lse = ctx.saved_tensors
 
+        row_ring_rank = get_rank() if ring_reduce_col else 0
+        per_machine_row_size = q.shape[-2]
         per_machine_col_size = k.shape[-2]
+
+        rank_row_offset = row_ring_rank * per_machine_row_size
+
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
 
         device = q.device
@@ -175,7 +186,7 @@ class RingFlashAttentionFunction(Function):
         )
 
         for ind, (qc, oc, doc, row_mask, lsec, dqc) in enumerate(row_splits):
-            q_start_index = ind * q_bucket_size - qk_len_diff
+            q_start_index = ind * q_bucket_size + rank_row_offset - qk_len_diff
 
             for ring_rank, (k, v, row_mask, dk, dv) in ring_pass_fn(k, v, row_mask, dk, dv):
 
