@@ -8,7 +8,11 @@ from torch.autograd.function import Function
 
 import einx
 
-from ring_attention_pytorch.ring import all_ring_pass, null_ring_pass
+from ring_attention_pytorch.ring import (
+    all_ring_pass,
+    null_ring_pass,
+    one_ring_pass
+)
 
 # constants
 
@@ -205,6 +209,9 @@ class RingFlashAttentionFunction(Function):
                     dqc.add_(dq_chunk)
                     dkc.add_(dk_chunk)
                     dvc.add_(dv_chunk)
+
+            dk = one_ring_pass(dk)
+            dv = one_ring_pass(dv)
 
         return dq, dk, dv, None, None, None, None
 
