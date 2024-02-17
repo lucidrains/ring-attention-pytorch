@@ -1,4 +1,4 @@
-from functools import lru_cache, partial
+from functools import lru_cache, partial, wraps
 
 import torch
 from torch import nn
@@ -17,11 +17,13 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
-def maybe_sum(*args):
-    args = [*filter(exists, args)]
-    if len(args) == 0:
-        return None
-    return sum(args)
+def maybe(fn):
+    @wraps(fn)
+    def inner(t, *args, **kwargs):
+        if not exists(t):
+            return None
+        return fn(t, *args, **kwargs)
+    return inner
 
 cache = partial(lru_cache, maxsize = None)
 
@@ -84,6 +86,22 @@ class OneRingPass(Function):
         return receive_buffer
 
 one_ring_pass = OneRingPass.apply
+
+# iterator for all ring passes of all tensors
+
+def all_ring_pass(*tensors):
+    num_passes = 0
+
+    while num_passes < get_world_size():
+
+        yield tuple(tensors)
+
+        num_passes += 1
+
+        if num_passes >= get_world_size():
+            continue
+
+        tensors = tuple(map(maybe(one_ring_pass), tensors))
 
 # main class
 
@@ -153,13 +171,11 @@ class RingAttention(Module):
         else:
             # accumulate outputs numerator and denominator
 
-            num_passes = 0
-
             out = torch.zeros_like(q)
             row_sums = torch.zeros((*q.shape[:-1], 1), device = device)
             row_maxes = torch.full((*q.shape[:-1], 1), mask_value, device = device)
 
-            while num_passes < get_world_size():
+            for k, v, mask in all_ring_pass(k, v, mask):
 
                 attn_weights = einx.dot('... i d, ... j d -> ... i j', q, k)
 
@@ -188,19 +204,6 @@ class RingAttention(Module):
                 # accumulate out
 
                 out = out * exp_row_max_diff + exp_values
-
-                # increment number of passes
-
-                num_passes += 1
-
-                if num_passes >= get_world_size():
-                    continue
-
-                k = one_ring_pass(k)
-                v = one_ring_pass(v)
-
-                if exists(mask):
-                    mask = one_ring_pass(mask)
 
             out = out / row_sums
 
