@@ -22,6 +22,7 @@ I will be running out of sponsorship early next month. So if you'd like to see t
 - [ ] figure out striped attention
 - [ ] figure out batch_isend_irecv
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
+- [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 
 ## Citations
 
