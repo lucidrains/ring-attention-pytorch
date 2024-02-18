@@ -24,6 +24,7 @@ def start(
     batch_size,
     batch_size_var_len,
     seq_len,
+    causal,
     dim,
     use_cuda
 ):
@@ -32,6 +33,7 @@ def start(
     ring_attention_net = RingTransformer(
         num_tokens = 256,
         dim = dim,
+        causal = causal,
         depth = 1,
         dim_head = 8,
         ring_attn = True,
@@ -43,6 +45,7 @@ def start(
     flash_attention_net = RingTransformer(
         num_tokens = 256,
         dim = dim,
+        causal = causal,
         depth = 1,
         dim_head = 8,
         ring_attn = False
@@ -111,6 +114,7 @@ if __name__ == '__main__':
     batch_size = 1
     batch_size_var_len = False
     use_cuda = False
+    causal = False
 
     assert not use_cuda or torch.cuda.device_count() <= world_size
 
@@ -124,6 +128,7 @@ if __name__ == '__main__':
             batch_size,
             batch_size_var_len,
             seq_len,
+            causal,
             dim,
             use_cuda
         ),

@@ -42,6 +42,8 @@ def default_attention(
     mask: Optional[Tensor],
     causal: bool = False
 ):
+    q = q * (q.shape[-1] ** 0.5)
+
     mask_value = -torch.finfo(q.dtype).max
 
     # similarity
@@ -213,8 +215,6 @@ class RingAttention(Module):
 
         qkv = self.to_qkv(x)
         q, k, v = rearrange('b n (qkv h d) -> qkv b h n d', qkv, qkv = 3, h = self.heads)
-
-        q = q * self.scale
 
         if self.force_regular_attn or not is_distributed():
             out = default_attention(q, k, v, mask = mask, causal = self.causal)
