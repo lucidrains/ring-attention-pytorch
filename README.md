@@ -21,7 +21,6 @@ I will be running out of sponsorship early next month. So if you'd like to see t
 - [ ] basic test case with rank of 1 and 4 and check for equivalent output
 - [ ] figure out striped attention
 - [ ] figure out batch_isend_irecv
-- [ ] cross attention
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 
 ## Citations

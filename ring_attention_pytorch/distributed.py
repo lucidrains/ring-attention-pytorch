@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from torch.nn import Module
 import torch.nn.functional as F
 from torch.autograd import Function
 
@@ -78,7 +79,7 @@ class AllGatherFunction(Function):
         grads_by_rank = grads.split(batch_sizes, dim = ctx.dim)
         return grads_by_rank[rank], None, None
 
-class AllGather(nn.Module):
+class AllGather(Module):
     def __init__(self, *, dim = 0):
         super().__init__()
         self.dim = dim

@@ -1,5 +1,7 @@
+from typing import Optional
+
 import torch
-from torch import nn
+from torch import nn, Tensor
 from torch.nn import Module, ModuleList
 
 import einx
@@ -11,6 +13,10 @@ from ring_attention_pytorch.ring import (
     get_rank
 )
 
+from ring_attention_pytorch.ring_flash_attention import (
+    ring_flash_attn
+)
+
 # helper functions
 
 def exists(v):
@@ -18,6 +24,42 @@ def exists(v):
 
 def default(v, d):
     return v if exists(v) else d
+
+def divisible_by(num, den):
+    return (num % den) == 0
+
+def default_attention(
+    q: Tensor,
+    k: Tensor,
+    v: Tensor,
+    mask: Optional[Tensor],
+    causal: bool = False
+):
+    mask_value = -torch.finfo(q.dtype).max
+
+    # similarity
+
+    sim = einx.dot('b h i d, b h j d -> b h i j', q, k)
+
+    # masking
+
+    if causal:
+        i, j = sim.shape[-2:]
+        causal_mask = torch.ones((i, j), dtype = torch.bool).triu(j - i + 1)
+        sim = einx.where('i j, , b h i j -> b h i j', causal_mask, mask_value, sim)
+
+    elif exists(mask):
+        sim = einx.where('b j, b h i j, -> b h i j', mask, sim, mask_value)
+
+    # attend
+
+    attn = einx.softmax('b h i [j]', sim)
+
+    # aggregate
+
+    out = einx.dot('b h i j, b h j d -> b h i d', attn, v)
+
+    return out
 
 # main class
 
@@ -29,13 +71,26 @@ class RingAttention(Module):
         dim_head = 64,
         heads = 8,
         causal = False,
-        eps = 1e-10
+        eps = 1e-10,
+        q_bucket_size = 512,
+        k_bucket_size = 512,
+        ring_attn = False,
+        ring_seq_size = 512
     ):
         super().__init__()
         self.eps = eps
         self.heads = heads
         self.scale = dim_head ** -0.5
         self.causal = causal
+
+        assert divisible_by(ring_seq_size, q_bucket_size)
+        assert divisible_by(ring_seq_size, k_bucket_size)
+
+        self.ring_attn = ring_attn
+        self.ring_seq_size = ring_seq_size
+
+        self.q_bucket_size = q_bucket_size
+        self.k_bucket_size = k_bucket_size
 
         dim_inner = dim_head * heads
         self.to_qkv = nn.Linear(dim, dim_inner * 3, bias = False)
@@ -54,7 +109,8 @@ class RingAttention(Module):
         d - feature dimension
         n, i, j - sequence
         """
-        device, mask_value = x.device, -torch.finfo(x.dtype).max
+
+        device = x.device
 
         qkv = self.to_qkv(x)
         q, k, v = rearrange('b n (qkv h d) -> qkv b h n d', qkv, qkv = 3, h = self.heads)
@@ -62,79 +118,16 @@ class RingAttention(Module):
         q = q * self.scale
 
         if not is_distributed():
-            # similarity
-
-            sim = einx.dot('b h i d, b h j d -> b h i j', q, k)
-
-            # masking
-
-            if self.causal:
-                i, j = sim.shape[-2:]
-                causal_mask = torch.ones((i, j), dtype = torch.bool).triu(j - i + 1)
-                sim = einx.where('i j, , b h i j -> b h i j', causal_mask, mask_value, sim)
-
-            elif exists(mask):
-                sim = einx.where('b j, b h i j, -> b h i j', mask, sim, mask_value)
-
-            # attend
-
-            attn = einx.softmax('b h i [j]', sim)
-
-            # aggregate
-
-            out = einx.dot('b h i j, b h j d -> b h i d', attn, v)
-
+            out = default_attention(q, k, v, mask = mask, causal = self.causal)
         else:
-            # accumulate outputs numerator and denominator
-
-            out = torch.zeros_like(q)
-            row_sums = torch.zeros((*q.shape[:-1], 1), device = device)
-            row_maxes = torch.full((*q.shape[:-1], 1), mask_value, device = device)
-
-            row_chunk_size = q.shape[-2]
-            col_chunk_size = k.shape[-2]
-            row_offset = get_rank() * row_chunk_size
-
-            for ring_rank, (k, v, mask) in all_ring_pass(k, v, mask):
-
-                col_offset = col_chunk_size * ring_rank
-
-                attn_weights = einx.dot('... i d, ... j d -> ... i j', q, k)
-
-                if self.causal:
-                    i, j = attn_weights.shape[-2:]
-                    causal_mask = torch.ones((i, j), dtype = torch.bool).triu(j - i + row_offset - col_offset + 1)
-                    attn_weights = einx.where('i j, b h i j, -> b h i j', causal_mask, attn_weights, mask_value)
-
-                elif exists(mask):
-                    attn_weights = einx.where('b j, b h i j, -> b h i j', mask, attn_weights, mask_value)
-
-                block_row_maxes = attn_weights.amax(dim = -1, keepdims = True)
-                new_row_maxes = torch.maximum(block_row_maxes, row_maxes)
-
-                exp_weights = torch.exp(attn_weights - new_row_maxes)
-
-                if self.causal:
-                    exp_weights = einx.where('i j, b h i j,', causal_mask, exp_weights, 0.)
-                elif exists(mask):
-                    exp_weights = einx.where('b j, b h i j,', mask, exp_weights, 0.)
-
-                block_row_sums = exp_weights.sum(dim = -1, keepdims = True).clamp(min = self.eps)
-
-                exp_values = einx.dot('... i j, ... j d -> ... i d', exp_weights, v)
-
-                exp_row_max_diff = torch.exp(row_maxes - new_row_maxes)
-
-                # update row sums and row maxes
-
-                row_sums = exp_row_max_diff * row_sums + block_row_sums
-                row_maxes = new_row_maxes
-
-                # accumulate out
-
-                out = out * exp_row_max_diff + exp_values
-
-            out = out / row_sums
+            out = ring_flash_attn(
+                q, k, v,
+                mask,
+                causal,
+                self.q_bucket_size,
+                self.k_bucket_size,
+                self.ring_attn
+            )
 
         # combine heads
 
