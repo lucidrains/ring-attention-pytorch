@@ -12,6 +12,40 @@ I will be running out of sponsorship early next month. So if you'd like to see t
 
 - <a href="https://a16z.com/supporting-the-open-source-ai-community/">A16Z Open Source AI Grant Program</a> for the generous sponsorship, as well as my other sponsors, for affording me the independence to open source current artificial intelligence research
 
+## Install
+
+```bash
+$ pip install ring-attention-pytorch
+```
+
+## Usage
+
+```python
+import torch
+from ring_attention_pytorch import RingAttention
+
+attn = RingAttention(
+    dim = 512,
+    dim_head = 64,
+    heads = 8,
+    causal = True,
+    auto_shard_seq = True,
+    ring_attn = True,
+    ring_seq_size = 512
+)
+
+tokens = torch.randn(1, 1024, 512)
+attended = attn(tokens)
+
+assert attended.shape == tokens.shape
+```
+
+## Test
+
+```bash
+$ python assert.py
+```
+
 ## Todo
 
 - [x] make it work with derived causal mask based on rank and chunk sizes
@@ -64,8 +98,8 @@ I will be running out of sponsorship early next month. So if you'd like to see t
 
 ```bibtex
 @article{dao2023flashattention2,
-    title     = {Flash{A}ttention-2: Faster Attention with Better Parallelism and Work Partitioning,
-    author    = {Dao, Tri},
-    year      = {2023}
+    title   = {Flash{A}ttention-2: Faster Attention with Better Parallelism and Work Partitioning,
+    author  = {Dao, Tri},
+    year    = {2023}
 }
 ```

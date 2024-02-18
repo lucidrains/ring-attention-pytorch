@@ -87,7 +87,7 @@ def start(
         ring_out = ring_out.cpu()
         flash_out = flash_out.cpu()
 
-        assert torch.allclose(ring_out, flash_out, atol = 1e-3), 'output is not the same'
+        assert torch.allclose(ring_out, flash_out, atol = 1e-6), 'output is not the same'
 
         # validate gradients of token embedding is the same for ring vs non-ring
 
@@ -96,10 +96,10 @@ def start(
         assert torch.allclose(
             get_embed_grad(ring_attention_net),
             get_embed_grad(flash_attention_net),
-            atol = 1e-2
+            atol = 1e-3
         ), 'grad is not the same'
 
-        print('✅ outputs and gradients are same between local and ddp')
+        print('✅ outputs and gradients are same between ring attention and non-ring attention')
 
     cleanup()
 
