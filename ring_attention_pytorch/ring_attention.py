@@ -62,6 +62,14 @@ def default_attention(
 
     return out
 
+# batch to sequence sharding and back
+
+def sharded_batch_to_sharded_seq(x, mask):
+    pass
+
+def sharded_seq_to_sharded_batch(x):
+    return x
+
 # main class
 
 class RingAttention(Module):
@@ -77,6 +85,7 @@ class RingAttention(Module):
         k_bucket_size = 512,
         ring_attn = False,
         ring_seq_size = 512,
+        auto_shard_seq = None,
         prenorm = True
     ):
         super().__init__()
@@ -90,6 +99,7 @@ class RingAttention(Module):
         assert divisible_by(ring_seq_size, k_bucket_size)
 
         self.ring_attn = ring_attn
+        self.auto_shard_seq = default(auto_shard_seq, ring_attn) # this should be done at the transformer level on the token ids for efficiency, but for testing purposes
         self.ring_seq_size = ring_seq_size
 
         self.q_bucket_size = q_bucket_size
@@ -117,6 +127,11 @@ class RingAttention(Module):
         n, i, j - sequence
         """
 
+        seq_len = x.shape[-1]
+
+        if self.auto_shard_seq:
+            x, mask = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
+
         device = x.device
 
         qkv = self.to_qkv(x)
@@ -139,8 +154,13 @@ class RingAttention(Module):
         # combine heads
 
         out = rearrange('b h n d -> b n (h d)', out)
-        return self.to_out(out)
+        out = self.to_out(out)
 
+        if self.auto_shard_seq:
+            out = sharded_seq_to_sharded_batch(out)
+            out = out[:, :seq_len]
+
+        return out
 # simple transformer for end2end testing
 
 class RMSNorm(Module):
@@ -176,8 +196,13 @@ class RingTransformer(Module):
         k_bucket_size = 512,
         ring_attn = False,
         ring_seq_size = 512,
+        auto_shard_seq = None,
     ):
         super().__init__()
+        self.ring_attn = ring_attn
+        self.ring_seq_size = ring_seq_size
+        self.auto_shard_seq = default(auto_shard_seq, ring_attn) # if ring attention is turned on, auto-shard across sequence dimension. this can also be turned off and done manually elsewhere in the data loading
+
         self.token_emb = nn.Embedding(num_tokens, dim)
 
         self.layers = ModuleList([])
@@ -192,12 +217,14 @@ class RingTransformer(Module):
                     q_bucket_size = q_bucket_size,
                     k_bucket_size = k_bucket_size,
                     ring_attn = ring_attn,
-                    ring_seq_size = ring_seq_size
+                    ring_seq_size = ring_seq_size,
+                    auto_shard_seq = False,
                 ),
                 FeedForward(dim = dim, mult = ff_mult)
             ]))
 
         self.to_logits = nn.Sequential(
+            RMSNorm(dim),
             nn.Linear(dim, num_tokens, bias = False)
         )
 
@@ -206,10 +233,21 @@ class RingTransformer(Module):
         x,
         mask = None
     ):
+        seq_len = x.shape[-1]
+
+        if self.auto_shard_seq:
+            x, mask = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
+
         x = self.token_emb(x)
 
         for attn, ff in self.layers:
             x = attn(x, mask = mask) + x
             x = ff(x) + x
 
-        return self.to_logits(x)
+        logits = self.to_logits(x)
+
+        if self.auto_shard_seq:
+            logits = sharded_seq_to_sharded_batch(logits)
+            logits = logits[:, :seq_len]
+
+        return logits
