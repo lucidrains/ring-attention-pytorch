@@ -55,7 +55,7 @@ $ python assert.py
 
 - [ ] testing
     - [x] make sure key padding mask works
-    - [ ] make sure causal mask works
+    - [x] make sure causal mask works
     - [ ] option to auto-decide ring sequence size based on world size
     - [ ] rotary embeddings, with proper key/value offset depending on ring rank
 

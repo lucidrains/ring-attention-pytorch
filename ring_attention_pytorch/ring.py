@@ -71,20 +71,20 @@ def send_and_receive_(x, receive_buffer, send_to_rank, receive_from_rank):
     dist.barrier()
 
 class OneRingPass(Function):
-    """ one ring pass to the right - assume tensor is all same shape for now """
+    """ one ring pass to the left and receive from the right - assume tensor is all same shape for now """
 
     @staticmethod
     def forward(ctx, x):
         x = x.contiguous()
         receive_buffer = torch.zeros_like(x)
-        send_and_receive_(x, receive_buffer, circular_rank_right(), circular_rank_left())
+        send_and_receive_(x, receive_buffer, circular_rank_left(), circular_rank_right())
         return receive_buffer
 
     @staticmethod
     def backward(ctx, grads):
         grads = grads.contiguous()
         receive_buffer = torch.zeros_like(grads)
-        send_and_receive_(grads, receive_buffer, circular_rank_left(), circular_rank_right())
+        send_and_receive_(grads, receive_buffer, circular_rank_right(), circular_rank_left())
         return receive_buffer
 
 one_ring_pass = OneRingPass.apply
