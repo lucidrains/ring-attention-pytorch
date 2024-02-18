@@ -18,6 +18,11 @@ from ring_attention_pytorch.ring_flash_attention import (
     ring_flash_attn
 )
 
+from ring_attention_pytorch.distributed import (
+    split_by_rank,
+    AllGather
+)
+
 # helper functions
 
 def exists(v):
@@ -64,11 +69,72 @@ def default_attention(
 
 # batch to sequence sharding and back
 
-def sharded_batch_to_sharded_seq(x, mask):
-    pass
+def pad_to_multiple(
+    x: Tensor,
+    length: int,
+    pad_value = 0
+):
+    seq_len = x.shape[-1]
+    remainder = seq_len % length
 
-def sharded_seq_to_sharded_batch(x):
-    return x
+    if remainder == 0:
+        return x, 0
+
+    pad_length = length - remainder
+    return F.pad(x, (0, pad_length), value = pad_value), pad_length
+
+def sharded_batch_to_sharded_seq(
+    x: Tensor,
+    mask: Optional[Tensor],
+    seq_size: int
+):
+    assert is_distributed()
+
+    orig_x, seq_len = x, x.shape[-1]
+
+    # auto pad sequence and mask, as ring passing makes assumption tensor is all same shape
+
+    x, pad_length = pad_to_multiple(x, seq_size)
+
+    if pad_length > 0:
+        if not exists(mask):
+            mask = torch.ones_like(orig_x).bool()
+
+        mask = pad_to_multiple(mask, seq_size, pad_value = False)
+
+    # all gather across batch
+
+    all_gather = AllGather(dim = 0)
+
+    x, sizes = all_gather(x)
+
+    if exists(mask):
+        mask = all_gather(mask)
+
+    # then split sequence across machines
+
+    x = x.split(seq_size, dim = -1)
+    x = split_by_rank(x)
+
+    if exists(mask):
+        mask = mask.split(seq_size, dim = -1)
+        mask = split_by_rank(mask)
+
+    return (x, mask), sizes
+
+def sharded_seq_to_sharded_batch(
+    logits: Tensor,
+    sizes
+):
+    all_gather = AllGather(dim = -2) # all gather across sequence
+
+    logits, _ = all_gather(logits)
+
+    logits = logits.split(sizes.tolist(), dim = 0)
+
+    logits = split_by_rank(logits)
+
+    return logits
 
 # main class
 
@@ -100,6 +166,9 @@ class RingAttention(Module):
 
         self.ring_attn = ring_attn
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # this should be done at the transformer level on the token ids for efficiency, but for testing purposes
+
+        assert not (not self.ring_attn and self.auto_shard_seq)
+
         self.ring_seq_size = ring_seq_size
 
         self.q_bucket_size = q_bucket_size
@@ -127,9 +196,12 @@ class RingAttention(Module):
         n, i, j - sequence
         """
 
+        ring_attn = self.ring_attn & is_distributed()
+        auto_shard_seq = self.auto_shard_seq & is_distributed()
+
         seq_len = x.shape[-1]
 
-        if self.auto_shard_seq:
+        if auto_shard_seq:
             x, mask = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
 
         device = x.device
@@ -148,7 +220,7 @@ class RingAttention(Module):
                 causal,
                 self.q_bucket_size,
                 self.k_bucket_size,
-                self.ring_attn
+                ring_attn
             )
 
         # combine heads
@@ -156,7 +228,7 @@ class RingAttention(Module):
         out = rearrange('b h n d -> b n (h d)', out)
         out = self.to_out(out)
 
-        if self.auto_shard_seq:
+        if auto_shard_seq:
             out = sharded_seq_to_sharded_batch(out)
             out = out[:, :seq_len]
 
@@ -203,6 +275,8 @@ class RingTransformer(Module):
         self.ring_seq_size = ring_seq_size
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # if ring attention is turned on, auto-shard across sequence dimension. this can also be turned off and done manually elsewhere in the data loading
 
+        assert not (not self.ring_attn and self.auto_shard_seq)
+
         self.token_emb = nn.Embedding(num_tokens, dim)
 
         self.layers = ModuleList([])
@@ -234,8 +308,9 @@ class RingTransformer(Module):
         mask = None
     ):
         seq_len = x.shape[-1]
+        auto_shard_seq = self.auto_shard_seq & is_distributed()
 
-        if self.auto_shard_seq:
+        if auto_shard_seq:
             x, mask = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
 
         x = self.token_emb(x)
@@ -246,7 +321,7 @@ class RingTransformer(Module):
 
         logits = self.to_logits(x)
 
-        if self.auto_shard_seq:
+        if auto_shard_seq:
             logits = sharded_seq_to_sharded_batch(logits)
             logits = logits[:, :seq_len]
 

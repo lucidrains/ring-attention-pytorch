@@ -59,8 +59,8 @@ I will be running out of sponsorship early next month. So if you'd like to see t
 
 ```bibtex
 @article{dao2023flashattention2,
-  title     = {Flash{A}ttention-2: Faster Attention with Better Parallelism and Work Partitioning,
-  author    = {Dao, Tri},
-  year      = {2023}
+    title     = {Flash{A}ttention-2: Faster Attention with Better Parallelism and Work Partitioning,
+    author    = {Dao, Tri},
+    year      = {2023}
 }
 ```

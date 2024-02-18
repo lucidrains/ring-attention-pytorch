@@ -3,7 +3,6 @@ from ring_attention_pytorch.ring_attention import (
     RingTransformer
 )
 
-
 from ring_attention_pytorch.ring_flash_attention import (
     ring_flash_attn
 )
