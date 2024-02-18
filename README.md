@@ -61,6 +61,7 @@ $ python assert.py
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] figure out batch_isend_irecv
+- [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
 
 ## Citations
 
