@@ -4,7 +4,7 @@ Explorations into <a href="https://arxiv.org/abs/2310.01889">Ring Attention</a>,
 
 It basically splits the data across the sequence dimension (instead of batch) and applies ring reduce to the processing of the tiles of the attention matrix, flash attention style.
 
-I believe this is being used for the 1-10 million tokens for the latest Gemini. At least some form of it.
+I believe this is being used for the 1-10 million tokens for the latest Gemini. At least some form of it; the other possibility would be unpublished improvements on top of <a href="https://github.com/lucidrains/recurrent-memory-transformer-pytorch">RMT</a>.
 
 I will be running out of sponsorship early next month. So if you'd like to see that this project gets completed, you need to sponsor me, and soon, or I will be leaving the open source scene for employment.
 
