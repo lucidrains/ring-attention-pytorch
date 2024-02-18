@@ -93,10 +93,12 @@ def start(
         # validate gradients of token embedding is the same for ring vs non-ring
 
         get_embed_grad = lambda model: model.token_emb.weight.grad
+        ring_embed_grad = get_embed_grad(ring_attention_net)
+        flash_embed_grad = get_embed_grad(flash_attention_net)
 
         assert torch.allclose(
-            get_embed_grad(ring_attention_net),
-            get_embed_grad(flash_attention_net),
+            ring_embed_grad,
+            flash_embed_grad,
             atol = 1e-3
         ), 'grad is not the same'
 
@@ -112,7 +114,7 @@ if __name__ == '__main__':
 
     assert not use_cuda or torch.cuda.device_count() <= world_size
 
-    seq_len = 32
+    seq_len = 31
     dim = 8
 
     mp.spawn(

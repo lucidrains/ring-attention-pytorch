@@ -36,7 +36,7 @@ def maybe_split(t, size, dim = -2):
     if not exists(t):
         return none_iterator()
 
-    return t.chunk(size, dim = dim)
+    return t.split(size, dim = dim)
 
 # ring + (flash) attention forwards and backwards
 
@@ -84,12 +84,10 @@ class RingFlashAttentionFunction(Function):
         num_col_tiles = math.ceil(k.shape[-2] / k_bucket_size)
 
         if exists(mask):
-            if mask.ndim == 2:
-                mask = rearrange('b n -> b 1 1 n', mask)
+            mask = rearrange('b n -> b 1 1 n', mask)
 
-            mask = ((mask,) * num_row_tiles) if mask.shape[-2] == 1 else mask.split(q_bucket_size, dim = -2)
-        else:
-            mask = (None,) * num_row_tiles
+        mask = ((mask,) * num_row_tiles)
+        orig_mask = mask
 
         row_splits = zip(
             q.split(q_bucket_size, dim = -2),
@@ -149,7 +147,7 @@ class RingFlashAttentionFunction(Function):
 
         lse = all_row_sums.log() + all_row_maxes
 
-        ctx.args = (causal, scale, mask, q_bucket_size, k_bucket_size, ring_reduce_col)
+        ctx.args = (causal, scale, orig_mask, q_bucket_size, k_bucket_size, ring_reduce_col)
         ctx.save_for_backward(q, orig_k, orig_v, o, lse)
 
         return o
