@@ -75,12 +75,14 @@ class OneRingPass(Function):
 
     @staticmethod
     def forward(ctx, x):
+        x = x.contiguous()
         receive_buffer = torch.zeros_like(x)
         send_and_receive_(x, receive_buffer, circular_rank_right(), circular_rank_left())
         return receive_buffer
 
     @staticmethod
     def backward(ctx, grads):
+        grads = grads.contiguous()
         receive_buffer = torch.zeros_like(grads)
         send_and_receive_(grads, receive_buffer, circular_rank_left(), circular_rank_right())
         return receive_buffer
