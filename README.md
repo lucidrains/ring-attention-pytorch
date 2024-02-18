@@ -19,10 +19,14 @@ I will be running out of sponsorship early next month. So if you'd like to see t
 - [x] functions for splitting the sequence evenly among ranks, either within attention function, or in the external ring transformer wrapper
 - [x] basic test case with two processes and check for equivalent output and gradients
 
+- [ ] testing
+    - [ ] make sure causal mask works
+    - [ ] option to auto-decide ring sequence size based on world size
+    - [ ] rotary embeddings, with proper key/value offset depending on ring rank
 - [ ] figure out striped attention
-- [ ] figure out batch_isend_irecv
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
+- [ ] figure out batch_isend_irecv
 
 ## Citations
 
