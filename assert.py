@@ -1,4 +1,5 @@
 import os
+from math import ceil
 from copy import deepcopy
 
 import torch
@@ -34,9 +35,9 @@ def start(
         depth = 1,
         dim_head = 8,
         ring_attn = True,
-        ring_seq_size = seq_len // world_size,
-        q_bucket_size = seq_len // world_size,
-        k_bucket_size = seq_len // world_size
+        ring_seq_size = ceil(seq_len / world_size),
+        q_bucket_size = ceil(seq_len / world_size),
+        k_bucket_size = ceil(seq_len / world_size)
     )
 
     flash_attention_net = RingTransformer(

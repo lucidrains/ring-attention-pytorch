@@ -101,7 +101,7 @@ def sharded_batch_to_sharded_seq(
         if not exists(mask):
             mask = torch.ones_like(orig_x).bool()
 
-        mask = pad_to_multiple(mask, seq_size, pad_value = False)
+        mask, _ = pad_to_multiple(mask, seq_size, pad_value = False)
 
     # all gather across batch
 
@@ -110,7 +110,7 @@ def sharded_batch_to_sharded_seq(
     x, sizes = all_gather(x)
 
     if exists(mask):
-        mask = all_gather(mask)
+        mask, _ = all_gather(mask)
 
     # then split sequence across machines
 
@@ -122,7 +122,7 @@ def sharded_batch_to_sharded_seq(
 
     if exists(mask):
         mask = mask.split(seq_size, dim = -1)
-        mask = split_by_rank(mask)
+        mask, _ = split_by_rank(mask)
 
     return (x, mask), sizes
 

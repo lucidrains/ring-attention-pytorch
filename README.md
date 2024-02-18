@@ -54,9 +54,11 @@ $ python assert.py
 - [x] basic test case with two processes and check for equivalent output and gradients
 
 - [ ] testing
+    - [ ] make sure key padding mask works
     - [ ] make sure causal mask works
     - [ ] option to auto-decide ring sequence size based on world size
     - [ ] rotary embeddings, with proper key/value offset depending on ring rank
+
 - [ ] figure out striped attention
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
