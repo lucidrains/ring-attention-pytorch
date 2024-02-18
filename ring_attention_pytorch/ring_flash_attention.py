@@ -87,6 +87,8 @@ class RingFlashAttentionFunction(Function):
                 mask = rearrange('b n -> b 1 1 n', mask)
 
             mask = ((mask,) * num_row_tiles) if mask.shape[-2] == 1 else mask.split(q_bucket_size, dim = -2)
+        else:
+            mask = (None,) * num_row_tiles
 
         row_splits = zip(
             q.split(q_bucket_size, dim = -2),
@@ -230,6 +232,6 @@ class RingFlashAttentionFunction(Function):
             dk = one_ring_pass(dk)
             dv = one_ring_pass(dv)
 
-        return dq, dk, dv, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None
 
 ring_flash_attn = RingFlashAttentionFunction.apply

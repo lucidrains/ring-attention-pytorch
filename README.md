@@ -16,9 +16,9 @@ I will be running out of sponsorship early next month. So if you'd like to see t
 
 - [x] make it work with derived causal mask based on rank and chunk sizes
 - [x] modify flash attention to output intermediates and figure out backwards with recompute and ring passes
+- [x] functions for splitting the sequence evenly among ranks, either within attention function, or in the external ring transformer wrapper
+- [x] basic test case with two processes and check for equivalent output and gradients
 
-- [ ] functions for splitting the sequence evenly among ranks, either within attention function, or in the external ring transformer wrapper
-- [ ] basic test case with rank of 1 and 4 and check for equivalent output
 - [ ] figure out striped attention
 - [ ] figure out batch_isend_irecv
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl

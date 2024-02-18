@@ -11,7 +11,8 @@ from einx import rearrange
 from ring_attention_pytorch.ring import (
     all_ring_pass,
     is_distributed,
-    get_rank
+    get_rank,
+    get_world_size
 )
 
 from ring_attention_pytorch.ring_flash_attention import (
@@ -114,7 +115,10 @@ def sharded_batch_to_sharded_seq(
     # then split sequence across machines
 
     x = x.split(seq_size, dim = -1)
-    x = split_by_rank(x)
+
+    assert len(x) == get_world_size()
+
+    x, _ = split_by_rank(x)
 
     if exists(mask):
         mask = mask.split(seq_size, dim = -1)
@@ -202,7 +206,7 @@ class RingAttention(Module):
         seq_len = x.shape[-1]
 
         if auto_shard_seq:
-            x, mask = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
+            (x, mask), batch_sizes = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
 
         device = x.device
 
@@ -217,7 +221,7 @@ class RingAttention(Module):
             out = ring_flash_attn(
                 q, k, v,
                 mask,
-                causal,
+                self.causal,
                 self.q_bucket_size,
                 self.k_bucket_size,
                 ring_attn
@@ -229,7 +233,7 @@ class RingAttention(Module):
         out = self.to_out(out)
 
         if auto_shard_seq:
-            out = sharded_seq_to_sharded_batch(out)
+            out, _ = sharded_seq_to_sharded_batch(out, batch_sizes)
             out = out[:, :seq_len]
 
         return out
@@ -311,7 +315,7 @@ class RingTransformer(Module):
         auto_shard_seq = self.auto_shard_seq & is_distributed()
 
         if auto_shard_seq:
-            x, mask = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
+            (x, mask), batch_sizes = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
 
         x = self.token_emb(x)
 
@@ -322,7 +326,7 @@ class RingTransformer(Module):
         logits = self.to_logits(x)
 
         if auto_shard_seq:
-            logits = sharded_seq_to_sharded_batch(logits)
+            logits, _ = sharded_seq_to_sharded_batch(logits, batch_sizes)
             logits = logits[:, :seq_len]
 
         return logits
