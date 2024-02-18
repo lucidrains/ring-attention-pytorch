@@ -156,19 +156,20 @@ class RingAttention(Module):
         ring_attn = False,
         ring_seq_size = 512,
         auto_shard_seq = None,
-        prenorm = True
+        prenorm = True,
+        force_regular_attn = False,
     ):
         super().__init__()
         self.eps = eps
         self.heads = heads
         self.scale = dim_head ** -0.5
-        self.prenorm = prenorm
         self.causal = causal
 
         assert divisible_by(ring_seq_size, q_bucket_size)
         assert divisible_by(ring_seq_size, k_bucket_size)
 
         self.ring_attn = ring_attn
+        self.force_regular_attn = force_regular_attn
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # this should be done at the transformer level on the token ids for efficiency, but for testing purposes
 
         assert not (not self.ring_attn and self.auto_shard_seq)
@@ -180,7 +181,7 @@ class RingAttention(Module):
 
         dim_inner = dim_head * heads
         self.to_qkv = nn.Sequential(
-            RMSNorm(dim),
+            RMSNorm(dim) if prenorm else nn.Identity(),
             nn.Linear(dim, dim_inner * 3, bias = False)
         )
 
@@ -215,7 +216,7 @@ class RingAttention(Module):
 
         q = q * self.scale
 
-        if not is_distributed():
+        if self.force_regular_attn or not is_distributed():
             out = default_attention(q, k, v, mask = mask, causal = self.causal)
         else:
             out = ring_flash_attn(
