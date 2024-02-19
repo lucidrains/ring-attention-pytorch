@@ -62,6 +62,11 @@ class RingFlashAttentionFunction(Function):
         """ Algorithm 1 in the v2 paper """
         assert q.shape[-2] == k.shape[-2]
 
+        # ignore key padding mask if autoregressive
+
+        if causal:
+            mask = None
+
         per_machine_seq_size = q.shape[-2]
         bucket_size = min(per_machine_seq_size, bucket_size)
         per_machine_buckets = per_machine_seq_size // bucket_size

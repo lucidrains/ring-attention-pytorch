@@ -64,22 +64,20 @@ def start(
     ddp_ring_attention_net = DDP(ring_attention_net)
     ddp_flash_attention_net = DDP(flash_attention_net)
 
-    inputs, _ = all_gather_variable_dim(seq)
-
     if use_cuda:
-        inputs = inputs.cuda(rank)
+        seq = inputs.cuda(rank)
         flash_attention_net.cuda(rank)
         ring_attention_net.cuda(rank)
 
     # flash
 
-    flash_out = ddp_flash_attention_net(inputs)
+    flash_out = ddp_flash_attention_net(seq)
 
     flash_out.mean().backward()
 
     # ring
 
-    ring_out = ddp_ring_attention_net(inputs)
+    ring_out = ddp_ring_attention_net(seq)
 
     ring_out.mean().backward()
 
@@ -112,15 +110,15 @@ def start(
 
 if __name__ == '__main__':
     world_size = 8
-    batch_size = 1
+    batch_size = 2
     batch_size_var_len = False
     use_cuda = False
-    causal = True
-    striped_ring_attn = True
+    causal = False
+    striped_ring_attn = False
 
     assert not use_cuda or torch.cuda.device_count() <= world_size
 
-    seq_len = 31
+    seq_len = 32
     dim = 8
 
     mp.spawn(
