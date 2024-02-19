@@ -294,6 +294,7 @@ class RingTransformer(Module):
 
         assert not (not self.ring_attn and self.auto_shard_seq)
         assert not (not self.ring_attn and self.striped_ring_attn)
+        assert not (self.striped_ring_attn and not causal), 'striped ring attention only applies to autoregressive models'
 
         self.token_emb = nn.Embedding(num_tokens, dim)
 
