@@ -59,7 +59,10 @@ $ python assert.py
     - [ ] option to auto-decide ring sequence size based on world size
     - [ ] rotary embeddings, with proper key/value offset depending on ring rank
 
-- [ ] figure out striped attention
+- [ ] striped attention
+    - [x] add the permutating logic before and after transformer
+    - [ ] add causal masking logic - account for sub bucketing by flash attention
+
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] figure out batch_isend_irecv
