@@ -290,6 +290,9 @@ class RingTransformer(Module):
         self.striped_ring_attn = striped_ring_attn
 
         self.ring_seq_size = ring_seq_size
+        self.bucket_size = bucket_size
+        assert divisible_by(ring_seq_size, bucket_size)
+
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # if ring attention is turned on, auto-shard across sequence dimension. this can also be turned off and done manually elsewhere in the data loading
 
         assert not (not self.ring_attn and self.auto_shard_seq)
@@ -341,10 +344,10 @@ class RingTransformer(Module):
             # for workload balancing https://arxiv.org/abs/2311.09431 - MIT paper from Brandon et al.
 
             if self.striped_ring_attn:
-                x = rearrange('b (i j) -> b (j i)', x, i = self.ring_seq_size)
+                x = rearrange('b (i j) -> b (j i)', x, i = self.bucket_size)
 
                 if exists(mask):
-                    mask = rearrange('b (i j) -> b (j i)', mask, i = self.ring_seq_size)
+                    mask = rearrange('b (i j) -> b (j i)', mask, i = self.bucket_size)
 
             # gather across batch and divide across world
 
@@ -367,7 +370,7 @@ class RingTransformer(Module):
             logits, _ = sharded_seq_to_sharded_batch(logits, batch_sizes)
 
             if self.striped_ring_attn:
-                logits = rearrange('b (i j) d -> b (j i) d', logits, j = self.ring_seq_size)
+                logits = rearrange('b (i j) d -> b (j i) d', logits, j = self.bucket_size)
 
             logits = logits[:, :seq_len]
 
