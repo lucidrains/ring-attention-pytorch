@@ -63,18 +63,16 @@ class RingFlashAttentionFunction(Function):
         assert q.shape[-2] == k.shape[-2]
 
         per_machine_seq_size = q.shape[-2]
+        bucket_size = min(per_machine_seq_size, bucket_size)
         per_machine_buckets = per_machine_seq_size // bucket_size
 
         orig_k, orig_v, device = k, v, q.device
 
         row_ring_rank = get_rank() if ring_reduce_col else 0
 
-        rank_row_offset = row_ring_rank * per_machine_seq_size
-
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
 
         max_neg_value = -torch.finfo(q.dtype).max
-        qk_len_diff = max(k.shape[-2] - q.shape[-2], 0)
 
         o = torch.zeros_like(q)
         all_row_sums = torch.zeros((*q.shape[:-1], 1), device = device)
@@ -99,12 +97,9 @@ class RingFlashAttentionFunction(Function):
         )
 
         for ind, (qc, oc, row_mask, row_sums, row_maxes) in enumerate(row_splits):
-            q_start_index = ind * bucket_size + rank_row_offset - qk_len_diff
             row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
             for ring_rank, (k, v, row_mask) in ring_pass_fn(k, v, row_mask):
-
-                per_machine_col_offset = ring_rank * per_machine_seq_size
 
                 col_splits = zip(
                     k.split(bucket_size, dim = -2),
@@ -113,7 +108,6 @@ class RingFlashAttentionFunction(Function):
                 )
 
                 for k_ind, (kc, vc, col_mask) in enumerate(col_splits):
-                    k_start_index = k_ind * bucket_size + per_machine_seq_size
                     col_bucket_index = ring_rank * per_machine_buckets + k_ind
 
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
@@ -177,14 +171,11 @@ class RingFlashAttentionFunction(Function):
         per_machine_seq_size = q.shape[-2]
         per_machine_buckets = per_machine_seq_size // bucket_size
 
-        rank_row_offset = row_ring_rank * per_machine_seq_size
-
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
 
         device = q.device
 
         max_neg_value = -torch.finfo(q.dtype).max
-        qk_len_diff = max(k.shape[-2] - q.shape[-2], 0)
 
         dq = torch.zeros_like(q)
         dk = torch.zeros_like(k)
@@ -200,12 +191,9 @@ class RingFlashAttentionFunction(Function):
         )
 
         for ind, (qc, oc, doc, row_mask, lsec, dqc) in enumerate(row_splits):
-            q_start_index = ind * bucket_size + rank_row_offset - qk_len_diff
             row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
             for ring_rank, (k, v, row_mask, dk, dv) in ring_pass_fn(k, v, row_mask, dk, dv):
-
-                per_machine_col_offset = ring_rank * per_machine_seq_size
 
                 col_splits = zip(
                     k.split(bucket_size, dim = -2),
@@ -216,7 +204,6 @@ class RingFlashAttentionFunction(Function):
                 )
 
                 for k_ind, (kc, vc, dkc, dvc, col_mask) in enumerate(col_splits):
-                    k_start_index = k_ind * bucket_size + per_machine_col_offset
                     col_bucket_index = ring_rank * per_machine_buckets + k_ind
 
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
