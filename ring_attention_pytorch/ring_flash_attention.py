@@ -58,7 +58,8 @@ class RingFlashAttentionFunction(Function):
         causal: bool,
         bucket_size: int,
         ring_reduce_col: bool,
-        striped_ring_attn: bool
+        max_ring_passes: Optional[int],
+        striped_ring_attn: bool,
     ):
         """ Algorithm 1 in the v2 paper """
         assert q.shape[-2] == k.shape[-2]
@@ -98,7 +99,7 @@ class RingFlashAttentionFunction(Function):
         for ind, (qc, oc, row_sums, row_maxes) in enumerate(row_splits):
             row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
-            for ring_rank, (k, v, mask) in ring_pass_fn(k, v, mask):
+            for ring_rank, (k, v, mask) in ring_pass_fn(k, v, mask, max_iters = max_ring_passes):
 
                 col_splits = zip(
                     k.split(bucket_size, dim = -2),
@@ -156,7 +157,16 @@ class RingFlashAttentionFunction(Function):
 
         lse = all_row_sums.log() + all_row_maxes
 
-        ctx.args = (causal, scale, orig_mask, bucket_size, ring_reduce_col, striped_ring_attn)
+        ctx.args = (
+            causal,
+            scale,
+            orig_mask,
+            bucket_size,
+            ring_reduce_col,
+            max_ring_passes,
+            striped_ring_attn
+        )
+
         ctx.save_for_backward(q, orig_k, orig_v, o, lse)
 
         return o
@@ -166,7 +176,16 @@ class RingFlashAttentionFunction(Function):
     def backward(ctx, do):
         """ Algorithm 2 in the v2 paper """
 
-        causal, scale, mask, bucket_size, ring_reduce_col, striped_ring_attn = ctx.args
+        (
+            causal,
+            scale,
+            mask,
+            bucket_size,
+            ring_reduce_col,
+            max_ring_passes,
+            striped_ring_attn
+        ) = ctx.args
+
         q, k, v, o, lse = ctx.saved_tensors
 
         row_ring_rank = get_rank() if ring_reduce_col else 0
@@ -195,7 +214,7 @@ class RingFlashAttentionFunction(Function):
         for ind, (qc, oc, doc, lsec, dqc) in enumerate(row_splits):
             row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
-            for ring_rank, (k, v, mask, dk, dv) in ring_pass_fn(k, v, mask, dk, dv):
+            for ring_rank, (k, v, mask, dk, dv) in ring_pass_fn(k, v, mask, dk, dv, max_iters = max_ring_passes):
 
                 col_splits = zip(
                     k.split(bucket_size, dim = -2),
@@ -247,6 +266,6 @@ class RingFlashAttentionFunction(Function):
             dk = one_ring_pass(dk)
             dv = one_ring_pass(dv)
 
-        return dq, dk, dv, None, None, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None, None, None
 
 ring_flash_attn = RingFlashAttentionFunction.apply

@@ -165,6 +165,7 @@ class RingAttention(Module):
         bucket_size = 512,
         ring_attn = False,
         ring_seq_size = 512,
+        max_ring_passes = None,
         striped_ring_attn = False,
         auto_shard_seq = None,
         prenorm = True,
@@ -179,6 +180,7 @@ class RingAttention(Module):
         assert divisible_by(ring_seq_size, bucket_size)
 
         self.ring_attn = ring_attn
+        self.max_ring_passes = max_ring_passes
         self.striped_ring_attn = striped_ring_attn
 
         self.force_regular_attn = force_regular_attn
@@ -234,6 +236,7 @@ class RingAttention(Module):
                 self.causal,
                 self.bucket_size,
                 ring_attn,
+                self.max_ring_passes,
                 self.striped_ring_attn
             )
 
@@ -284,6 +287,7 @@ class RingTransformer(Module):
         striped_ring_attn = False,
         ring_seq_size = 512,
         auto_shard_seq = None,
+        max_ring_passes = None
     ):
         super().__init__()
         self.ring_attn = ring_attn
@@ -313,6 +317,7 @@ class RingTransformer(Module):
                     bucket_size = bucket_size,
                     ring_attn = ring_attn,
                     ring_seq_size = ring_seq_size,
+                    max_ring_passes = max_ring_passes,
                     striped_ring_attn = striped_ring_attn,
                     auto_shard_seq = False,
                 ),

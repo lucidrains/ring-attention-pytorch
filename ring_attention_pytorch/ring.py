@@ -71,43 +71,46 @@ def send_and_receive_(x, receive_buffer, send_to_rank, receive_from_rank):
     dist.barrier()
 
 class OneRingPass(Function):
-    """ one ring pass to the left and receive from the right - assume tensor is all same shape for now """
+    """ one ring pass to the right and receive from the left - assume tensor is all same shape for now """
 
     @staticmethod
     def forward(ctx, x):
         x = x.contiguous()
         receive_buffer = torch.zeros_like(x)
-        send_and_receive_(x, receive_buffer, circular_rank_left(), circular_rank_right())
+        send_and_receive_(x, receive_buffer, circular_rank_right(), circular_rank_left())
         return receive_buffer
 
     @staticmethod
     def backward(ctx, grads):
         grads = grads.contiguous()
         receive_buffer = torch.zeros_like(grads)
-        send_and_receive_(grads, receive_buffer, circular_rank_right(), circular_rank_left())
+        send_and_receive_(grads, receive_buffer, circular_rank_left(), circular_rank_right())
         return receive_buffer
 
 one_ring_pass = OneRingPass.apply
 
 # iterator for all ring passes of all tensors
 
-def null_ring_pass(*tensors):
+def null_ring_pass(*tensors, max_iters = None):
     yield 0, tuple(tensors)
 
-def all_ring_pass(*tensors):
-    num_passes = 0
-    rank = get_rank()
+def all_ring_pass(*tensors, max_iters = None):
     world_size = get_world_size()
+    max_iters = default(max_iters, world_size)
+    total_iters = min(world_size, max_iters)
 
-    while num_passes < world_size:
+    curr_ring_pos = get_rank()
 
-        curr_ring_pos = (rank + num_passes) % world_size
+    assert total_iters > 0
+
+    for ind in range(total_iters):
+        is_last = ind == (total_iters - 1)
 
         yield curr_ring_pos, tuple(tensors)
 
-        num_passes += 1
+        curr_ring_pos = circular_index_left(curr_ring_pos, world_size)
 
-        if num_passes >= world_size:
+        if is_last:
             continue
 
         tensors = tuple(map(maybe(one_ring_pass), tensors))
