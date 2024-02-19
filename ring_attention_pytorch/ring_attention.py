@@ -165,6 +165,7 @@ class RingAttention(Module):
         bucket_size = 512,
         ring_attn = False,
         ring_seq_size = 512,
+        striped_ring_attn = False,
         auto_shard_seq = None,
         prenorm = True,
         force_regular_attn = False,
@@ -178,6 +179,8 @@ class RingAttention(Module):
         assert divisible_by(ring_seq_size, bucket_size)
 
         self.ring_attn = ring_attn
+        self.striped_ring_attn = striped_ring_attn
+
         self.force_regular_attn = force_regular_attn
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # this should be done at the transformer level on the token ids for efficiency, but for testing purposes
 
@@ -230,7 +233,8 @@ class RingAttention(Module):
                 mask,
                 self.causal,
                 self.bucket_size,
-                ring_attn
+                ring_attn,
+                self.striped_ring_attn
             )
 
         # combine heads
@@ -289,6 +293,7 @@ class RingTransformer(Module):
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # if ring attention is turned on, auto-shard across sequence dimension. this can also be turned off and done manually elsewhere in the data loading
 
         assert not (not self.ring_attn and self.auto_shard_seq)
+        assert not (not self.ring_attn and self.striped_ring_attn)
 
         self.token_emb = nn.Embedding(num_tokens, dim)
 
@@ -304,6 +309,7 @@ class RingTransformer(Module):
                     bucket_size = bucket_size,
                     ring_attn = ring_attn,
                     ring_seq_size = ring_seq_size,
+                    striped_ring_attn = striped_ring_attn,
                     auto_shard_seq = False,
                 ),
                 FeedForward(dim = dim, mult = ff_mult)

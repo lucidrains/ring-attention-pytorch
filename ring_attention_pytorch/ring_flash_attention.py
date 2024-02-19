@@ -56,11 +56,14 @@ class RingFlashAttentionFunction(Function):
         mask: Optional[Tensor],
         causal: bool,
         bucket_size: int,
-        ring_reduce_col: bool
+        ring_reduce_col: bool,
+        striped_ring_attn: bool
     ):
         """ Algorithm 1 in the v2 paper """
         assert q.shape[-2] == k.shape[-2]
+
         per_machine_seq_size = q.shape[-2]
+        per_machine_buckets = per_machine_seq_size // bucket_size
 
         orig_k, orig_v, device = k, v, q.device
 
@@ -97,6 +100,7 @@ class RingFlashAttentionFunction(Function):
 
         for ind, (qc, oc, row_mask, row_sums, row_maxes) in enumerate(row_splits):
             q_start_index = ind * bucket_size + rank_row_offset - qk_len_diff
+            row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
             for ring_rank, (k, v, row_mask) in ring_pass_fn(k, v, row_mask):
 
@@ -110,15 +114,25 @@ class RingFlashAttentionFunction(Function):
 
                 for k_ind, (kc, vc, col_mask) in enumerate(col_splits):
                     k_start_index = k_ind * bucket_size + per_machine_seq_size
+                    col_bucket_index = ring_rank * per_machine_buckets + k_ind
 
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
 
                     if exists(col_mask):
                         attn_weights.masked_fill_(~col_mask, max_neg_value)
 
-                    if causal and q_start_index < (k_start_index + bucket_size - 1):
-                        causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(q_start_index - k_start_index + 1)
-                        attn_weights.masked_fill_(causal_mask, max_neg_value)
+                    if causal:
+                        if striped_ring_attn:
+                            triu_offset = int(row_bucket_index >= col_bucket_index)
+                            causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(triu_offset)
+                            attn_weights.masked_fill_(causal_mask, max_neg_value)
+
+                        else:
+                            if row_bucket_index == col_bucket_index:
+                                causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(1)
+                                attn_weights.masked_fill_(causal_mask, max_neg_value)
+                            elif row_bucket_index < col_bucket_index:
+                                attn_weights.fill_(max_neg_value)
 
                     block_row_maxes = attn_weights.amax(dim = -1, keepdims = True)
                     new_row_maxes = torch.maximum(block_row_maxes, row_maxes)
@@ -145,7 +159,7 @@ class RingFlashAttentionFunction(Function):
 
         lse = all_row_sums.log() + all_row_maxes
 
-        ctx.args = (causal, scale, orig_mask, bucket_size, ring_reduce_col)
+        ctx.args = (causal, scale, orig_mask, bucket_size, ring_reduce_col, striped_ring_attn)
         ctx.save_for_backward(q, orig_k, orig_v, o, lse)
 
         return o
@@ -155,11 +169,13 @@ class RingFlashAttentionFunction(Function):
     def backward(ctx, do):
         """ Algorithm 2 in the v2 paper """
 
-        causal, scale, mask, bucket_size, ring_reduce_col = ctx.args
+        causal, scale, mask, bucket_size, ring_reduce_col, striped_ring_attn = ctx.args
         q, k, v, o, lse = ctx.saved_tensors
 
         row_ring_rank = get_rank() if ring_reduce_col else 0
+
         per_machine_seq_size = q.shape[-2]
+        per_machine_buckets = per_machine_seq_size // bucket_size
 
         rank_row_offset = row_ring_rank * per_machine_seq_size
 
@@ -185,6 +201,7 @@ class RingFlashAttentionFunction(Function):
 
         for ind, (qc, oc, doc, row_mask, lsec, dqc) in enumerate(row_splits):
             q_start_index = ind * bucket_size + rank_row_offset - qk_len_diff
+            row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
             for ring_rank, (k, v, row_mask, dk, dv) in ring_pass_fn(k, v, row_mask, dk, dv):
 
@@ -200,12 +217,21 @@ class RingFlashAttentionFunction(Function):
 
                 for k_ind, (kc, vc, dkc, dvc, col_mask) in enumerate(col_splits):
                     k_start_index = k_ind * bucket_size + per_machine_col_offset
+                    col_bucket_index = ring_rank * per_machine_buckets + k_ind
 
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
 
-                    if causal and q_start_index < (k_start_index + bucket_size - 1):
-                        causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(q_start_index - k_start_index + 1)
-                        attn_weights.masked_fill_(causal_mask, max_neg_value)
+                    if causal:
+                        if striped_ring_attn:
+                            triu_offset = int(row_bucket_index >= col_bucket_index)
+                            causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(triu_offset)
+                            attn_weights.masked_fill_(causal_mask, max_neg_value)
+                        else:
+                            if row_bucket_index == col_bucket_index:
+                                causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(1)
+                                attn_weights.masked_fill_(causal_mask, max_neg_value)
+                            elif row_bucket_index < col_bucket_index:
+                                attn_weights.fill_(max_neg_value)
 
                     p = torch.exp(attn_weights - lsec)
 
@@ -228,6 +254,6 @@ class RingFlashAttentionFunction(Function):
             dk = one_ring_pass(dk)
             dv = one_ring_pass(dv)
 
-        return dq, dk, dv, None, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None, None
 
 ring_flash_attn = RingFlashAttentionFunction.apply

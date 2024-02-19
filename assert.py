@@ -115,7 +115,7 @@ if __name__ == '__main__':
     batch_size = 1
     batch_size_var_len = False
     use_cuda = False
-    causal = False
+    causal = True
     striped_ring_attn = True
 
     assert not use_cuda or torch.cuda.device_count() <= world_size
