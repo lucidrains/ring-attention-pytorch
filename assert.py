@@ -25,6 +25,7 @@ def start(
     batch_size_var_len,
     seq_len,
     causal,
+    striped_ring_attn,
     dim,
     use_cuda
 ):
@@ -37,6 +38,7 @@ def start(
         depth = 1,
         dim_head = 8,
         ring_attn = True,
+        striped_ring_attn = striped_ring_attn,
         ring_seq_size = ceil(seq_len / world_size),
         q_bucket_size = ceil(seq_len / world_size),
         k_bucket_size = ceil(seq_len / world_size)
@@ -115,6 +117,7 @@ if __name__ == '__main__':
     batch_size_var_len = False
     use_cuda = False
     causal = True
+    striped_ring_attn = True
 
     assert not use_cuda or torch.cuda.device_count() <= world_size
 
@@ -129,6 +132,7 @@ if __name__ == '__main__':
             batch_size_var_len,
             seq_len,
             causal,
+            striped_ring_attn,
             dim,
             use_cuda
         ),

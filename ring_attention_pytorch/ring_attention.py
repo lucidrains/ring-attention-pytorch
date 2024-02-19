@@ -86,24 +86,33 @@ def pad_to_multiple(
     pad_length = length - remainder
     return F.pad(x, (0, pad_length), value = pad_value), pad_length
 
-def sharded_batch_to_sharded_seq(
+def maybe_pad_seq_and_mask(
     x: Tensor,
     mask: Optional[Tensor],
     seq_size: int
 ):
-    assert is_distributed()
-
     orig_x, seq_len = x, x.shape[-1]
 
     # auto pad sequence and mask, as ring passing makes assumption tensor is all same shape
 
     x, pad_length = pad_to_multiple(x, seq_size)
 
-    if pad_length > 0:
-        if not exists(mask):
-            mask = torch.ones_like(orig_x).bool()
+    if pad_length == 0:
+        return x, mask
 
-        mask, _ = pad_to_multiple(mask, seq_size, pad_value = False)
+    if not exists(mask):
+        mask = torch.ones_like(orig_x).bool()
+
+    mask, _ = pad_to_multiple(mask, seq_size, pad_value = False)
+
+    return x, mask
+
+def sharded_batch_to_sharded_seq(
+    x: Tensor,
+    mask: Optional[Tensor],
+    seq_size: int
+):
+    assert is_distributed()
 
     # all gather across batch
 
@@ -272,11 +281,14 @@ class RingTransformer(Module):
         q_bucket_size = 512,
         k_bucket_size = 512,
         ring_attn = False,
+        striped_ring_attn = False,
         ring_seq_size = 512,
         auto_shard_seq = None,
     ):
         super().__init__()
         self.ring_attn = ring_attn
+        self.striped_ring_attn = striped_ring_attn
+
         self.ring_seq_size = ring_seq_size
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # if ring attention is turned on, auto-shard across sequence dimension. this can also be turned off and done manually elsewhere in the data loading
 
@@ -315,8 +327,28 @@ class RingTransformer(Module):
         seq_len = x.shape[-1]
         auto_shard_seq = self.auto_shard_seq & is_distributed()
 
+        # take care of padding to divide sequence across the machines
+
         if auto_shard_seq:
+
+            # first pad to right multiple
+
+            x, mask = maybe_pad_seq_and_mask(x, mask, self.ring_seq_size)
+
+            # account for striped attention
+            # for workload balancing https://arxiv.org/abs/2311.09431 - MIT paper from Brandon et al.
+
+            if self.striped_ring_attn:
+                x = rearrange('b (i j) -> b (j i)', x, i = self.ring_seq_size)
+
+                if exists(mask):
+                    mask = rearrange('b (i j) -> b (j i)', mask, i = self.ring_seq_size)
+
+            # gather across batch and divide across world
+
             (x, mask), batch_sizes = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
+
+        # main transformer logic
 
         x = self.token_emb(x)
 
@@ -326,7 +358,13 @@ class RingTransformer(Module):
 
         logits = self.to_logits(x)
 
+        # now gather all sequence chunks across machines and shard back to original batch for cross entropy loss
+
         if auto_shard_seq:
+
+            if self.striped_ring_attn:
+                logits = rearrange('b (i j) d -> b (j i) d', logits, i = self.ring_seq_size)
+
             logits, _ = sharded_seq_to_sharded_batch(logits, batch_sizes)
             logits = logits[:, :seq_len]
 
