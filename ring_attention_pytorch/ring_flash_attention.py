@@ -148,6 +148,8 @@ class RingFlashAttentionFunction(Function):
                     row_maxes.copy_(new_row_maxes)
                     row_sums.copy_(new_row_sums)
 
+                k = one_ring_pass(k)
+                v = one_ring_pass(v)
                 mask = maybe(one_ring_pass)(mask)
 
             oc.div_(row_sums)
@@ -238,6 +240,8 @@ class RingFlashAttentionFunction(Function):
                     dkc.add_(dk_chunk)
                     dvc.add_(dv_chunk)
 
+                k = one_ring_pass(k)
+                v = one_ring_pass(v)
                 mask = maybe(one_ring_pass)(mask)
 
             dk = one_ring_pass(dk)

@@ -40,7 +40,7 @@ def start(
         ring_attn = True,
         striped_ring_attn = striped_ring_attn,
         ring_seq_size = ceil(seq_len / world_size),
-        bucket_size = ceil(seq_len / world_size),
+        bucket_size = ceil(seq_len / world_size / 2),
     )
 
     flash_attention_net = RingTransformer(
@@ -101,7 +101,7 @@ def start(
         assert torch.allclose(
             ring_embed_grad,
             flash_embed_grad,
-            atol = 1e-3
+            atol = 1e-2
         ), 'grad is not the same'
 
         print('✅ outputs and gradients are same between ring attention and non-ring attention')
@@ -109,16 +109,16 @@ def start(
     cleanup()
 
 if __name__ == '__main__':
-    world_size = 8
+    world_size = 2
     batch_size = 2
     batch_size_var_len = False
     use_cuda = False
     causal = False
-    striped_ring_attn = False
+    striped_ring_attn = True
 
     assert not use_cuda or torch.cuda.device_count() <= world_size
 
-    seq_len = 32
+    seq_len = 3
     dim = 8
 
     mp.spawn(

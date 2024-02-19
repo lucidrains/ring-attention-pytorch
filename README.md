@@ -61,8 +61,9 @@ $ python assert.py
 - [x] striped attention
     - [x] add the permutating logic before and after transformer
     - [x] add causal masking logic - account for sub bucketing by flash attention
+- [x] fix issue with ring attention when flash buckets > 1
 
-- [ ] fix autoregressive when there is greater than 1 flash attention tile per machine
+- [ ] move flash attention back to key / value column traversal on outer loop and save on ring communication
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] figure out batch_isend_irecv
