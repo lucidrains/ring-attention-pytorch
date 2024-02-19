@@ -162,8 +162,7 @@ class RingAttention(Module):
         heads = 8,
         causal = False,
         eps = 1e-10,
-        q_bucket_size = 512,
-        k_bucket_size = 512,
+        bucket_size = 512,
         ring_attn = False,
         ring_seq_size = 512,
         auto_shard_seq = None,
@@ -176,8 +175,7 @@ class RingAttention(Module):
         self.scale = dim_head ** -0.5
         self.causal = causal
 
-        assert divisible_by(ring_seq_size, q_bucket_size)
-        assert divisible_by(ring_seq_size, k_bucket_size)
+        assert divisible_by(ring_seq_size, bucket_size)
 
         self.ring_attn = ring_attn
         self.force_regular_attn = force_regular_attn
@@ -187,8 +185,7 @@ class RingAttention(Module):
 
         self.ring_seq_size = ring_seq_size
 
-        self.q_bucket_size = q_bucket_size
-        self.k_bucket_size = k_bucket_size
+        self.bucket_size = bucket_size
 
         dim_inner = dim_head * heads
         self.to_qkv = nn.Sequential(
@@ -232,8 +229,7 @@ class RingAttention(Module):
                 q, k, v,
                 mask,
                 self.causal,
-                self.q_bucket_size,
-                self.k_bucket_size,
+                self.bucket_size,
                 ring_attn
             )
 
@@ -279,8 +275,7 @@ class RingTransformer(Module):
         dim_head = 64,
         heads = 8,
         ff_mult = 4,
-        q_bucket_size = 512,
-        k_bucket_size = 512,
+        bucket_size = 512,
         ring_attn = False,
         striped_ring_attn = False,
         ring_seq_size = 512,
@@ -306,8 +301,7 @@ class RingTransformer(Module):
                     causal = causal,
                     dim_head = dim_head,
                     heads = heads,
-                    q_bucket_size = q_bucket_size,
-                    k_bucket_size = k_bucket_size,
+                    bucket_size = bucket_size,
                     ring_attn = ring_attn,
                     ring_seq_size = ring_seq_size,
                     auto_shard_seq = False,

@@ -40,8 +40,7 @@ def start(
         ring_attn = True,
         striped_ring_attn = striped_ring_attn,
         ring_seq_size = ceil(seq_len / world_size),
-        q_bucket_size = ceil(seq_len / world_size),
-        k_bucket_size = ceil(seq_len / world_size)
+        bucket_size = ceil(seq_len / world_size),
     )
 
     flash_attention_net = RingTransformer(

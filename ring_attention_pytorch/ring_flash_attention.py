@@ -55,19 +55,18 @@ class RingFlashAttentionFunction(Function):
         v: Tensor,
         mask: Optional[Tensor],
         causal: bool,
-        q_bucket_size: int,
-        k_bucket_size: int,
+        bucket_size: int,
         ring_reduce_col: bool
     ):
         """ Algorithm 1 in the v2 paper """
+        assert q.shape[-2] == k.shape[-2]
+        per_machine_seq_size = q.shape[-2]
 
         orig_k, orig_v, device = k, v, q.device
 
         row_ring_rank = get_rank() if ring_reduce_col else 0
-        per_machine_row_size = q.shape[-2]
-        per_machine_col_size = k.shape[-2]
 
-        rank_row_offset = row_ring_rank * per_machine_row_size
+        rank_row_offset = row_ring_rank * per_machine_seq_size
 
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
 
@@ -80,45 +79,44 @@ class RingFlashAttentionFunction(Function):
 
         scale = (q.shape[-1] ** -0.5)
 
-        num_row_tiles = math.ceil(q.shape[-2] / q_bucket_size)
-        num_col_tiles = math.ceil(k.shape[-2] / k_bucket_size)
+        num_tiles = math.ceil(per_machine_seq_size / bucket_size)
 
         if exists(mask):
             mask = rearrange('b n -> b 1 1 n', mask)
 
-        mask = ((mask,) * num_row_tiles)
+        mask = ((mask,) * num_tiles)
         orig_mask = mask
 
         row_splits = zip(
-            q.split(q_bucket_size, dim = -2),
-            o.split(q_bucket_size, dim = -2),
+            q.split(bucket_size, dim = -2),
+            o.split(bucket_size, dim = -2),
             mask,
-            all_row_sums.split(q_bucket_size, dim = -2),
-            all_row_maxes.split(q_bucket_size, dim = -2),
+            all_row_sums.split(bucket_size, dim = -2),
+            all_row_maxes.split(bucket_size, dim = -2),
         )
 
         for ind, (qc, oc, row_mask, row_sums, row_maxes) in enumerate(row_splits):
-            q_start_index = ind * q_bucket_size + rank_row_offset - qk_len_diff
+            q_start_index = ind * bucket_size + rank_row_offset - qk_len_diff
 
             for ring_rank, (k, v, row_mask) in ring_pass_fn(k, v, row_mask):
 
-                per_machine_col_offset = ring_rank * per_machine_col_size
+                per_machine_col_offset = ring_rank * per_machine_seq_size
 
                 col_splits = zip(
-                    k.split(k_bucket_size, dim = -2),
-                    v.split(k_bucket_size, dim = -2),
-                    maybe_split(row_mask, k_bucket_size, dim = -1)
+                    k.split(bucket_size, dim = -2),
+                    v.split(bucket_size, dim = -2),
+                    maybe_split(row_mask, bucket_size, dim = -1)
                 )
 
                 for k_ind, (kc, vc, col_mask) in enumerate(col_splits):
-                    k_start_index = k_ind * k_bucket_size + per_machine_col_offset
+                    k_start_index = k_ind * bucket_size + per_machine_seq_size
 
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
 
                     if exists(col_mask):
                         attn_weights.masked_fill_(~col_mask, max_neg_value)
 
-                    if causal and q_start_index < (k_start_index + k_bucket_size - 1):
+                    if causal and q_start_index < (k_start_index + bucket_size - 1):
                         causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(q_start_index - k_start_index + 1)
                         attn_weights.masked_fill_(causal_mask, max_neg_value)
 
@@ -147,7 +145,7 @@ class RingFlashAttentionFunction(Function):
 
         lse = all_row_sums.log() + all_row_maxes
 
-        ctx.args = (causal, scale, orig_mask, q_bucket_size, k_bucket_size, ring_reduce_col)
+        ctx.args = (causal, scale, orig_mask, bucket_size, ring_reduce_col)
         ctx.save_for_backward(q, orig_k, orig_v, o, lse)
 
         return o
@@ -157,14 +155,13 @@ class RingFlashAttentionFunction(Function):
     def backward(ctx, do):
         """ Algorithm 2 in the v2 paper """
 
-        causal, scale, mask, q_bucket_size, k_bucket_size, ring_reduce_col = ctx.args
+        causal, scale, mask, bucket_size, ring_reduce_col = ctx.args
         q, k, v, o, lse = ctx.saved_tensors
 
         row_ring_rank = get_rank() if ring_reduce_col else 0
-        per_machine_row_size = q.shape[-2]
-        per_machine_col_size = k.shape[-2]
+        per_machine_seq_size = q.shape[-2]
 
-        rank_row_offset = row_ring_rank * per_machine_row_size
+        rank_row_offset = row_ring_rank * per_machine_seq_size
 
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
 
@@ -178,35 +175,35 @@ class RingFlashAttentionFunction(Function):
         dv = torch.zeros_like(v)
 
         row_splits = zip(
-            q.split(q_bucket_size, dim = -2),
-            o.split(q_bucket_size, dim = -2),
-            do.split(q_bucket_size, dim = -2),
+            q.split(bucket_size, dim = -2),
+            o.split(bucket_size, dim = -2),
+            do.split(bucket_size, dim = -2),
             mask,
-            lse.split(q_bucket_size, dim = -2),
-            dq.split(q_bucket_size, dim = -2)
+            lse.split(bucket_size, dim = -2),
+            dq.split(bucket_size, dim = -2)
         )
 
         for ind, (qc, oc, doc, row_mask, lsec, dqc) in enumerate(row_splits):
-            q_start_index = ind * q_bucket_size + rank_row_offset - qk_len_diff
+            q_start_index = ind * bucket_size + rank_row_offset - qk_len_diff
 
             for ring_rank, (k, v, row_mask, dk, dv) in ring_pass_fn(k, v, row_mask, dk, dv):
 
-                per_machine_col_offset = ring_rank * per_machine_col_size
+                per_machine_col_offset = ring_rank * per_machine_seq_size
 
                 col_splits = zip(
-                    k.split(k_bucket_size, dim = -2),
-                    v.split(k_bucket_size, dim = -2),
-                    dk.split(k_bucket_size, dim = -2),
-                    dv.split(k_bucket_size, dim = -2),
-                    maybe_split(row_mask, k_bucket_size, dim = -1)
+                    k.split(bucket_size, dim = -2),
+                    v.split(bucket_size, dim = -2),
+                    dk.split(bucket_size, dim = -2),
+                    dv.split(bucket_size, dim = -2),
+                    maybe_split(row_mask, bucket_size, dim = -1)
                 )
 
                 for k_ind, (kc, vc, dkc, dvc, col_mask) in enumerate(col_splits):
-                    k_start_index = k_ind * k_bucket_size + per_machine_col_offset
+                    k_start_index = k_ind * bucket_size + per_machine_col_offset
 
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
 
-                    if causal and q_start_index < (k_start_index + k_bucket_size - 1):
+                    if causal and q_start_index < (k_start_index + bucket_size - 1):
                         causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(q_start_index - k_start_index + 1)
                         attn_weights.masked_fill_(causal_mask, max_neg_value)
 
