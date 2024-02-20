@@ -1,12 +1,11 @@
 from typing import Optional
 
 import torch
-from torch import nn, Tensor
+from torch import nn, einsum, Tensor
 import torch.nn.functional as F
 from torch.nn import Module, ModuleList
 
-import einx
-from einx import rearrange
+from einops import rearrange
 
 from ring_attention_pytorch.ring import (
     all_ring_pass,
@@ -48,25 +47,26 @@ def default_attention(
 
     # similarity
 
-    sim = einx.dot('b h i d, b h j d -> b h i j', q, k)
+    sim = einsum('b h i d, b h j d -> b h i j', q, k)
 
     # masking
 
     if causal:
         i, j = sim.shape[-2:]
         causal_mask = torch.ones((i, j), dtype = torch.bool).triu(j - i + 1)
-        sim = einx.where('i j, , b h i j -> b h i j', causal_mask, mask_value, sim)
+        sim = torch.where(causal_mask, mask_value, sim)
 
     elif exists(mask):
-        sim = einx.where('b j, b h i j, -> b h i j', mask, sim, mask_value)
+        mask = rearrange(mask, 'b j -> b 1 1 j')
+        sim = torch.where(mask, sim, mask_value)
 
     # attend
 
-    attn = einx.softmax('b h i [j]', sim)
+    attn = sim.softmax(dim = -1)
 
     # aggregate
 
-    out = einx.dot('b h i j, b h j d -> b h i d', attn, v)
+    out = einsum('b h i j, b h j d -> b h i d', attn, v)
 
     return out
 
@@ -225,7 +225,7 @@ class RingAttention(Module):
         device = x.device
 
         qkv = self.to_qkv(x)
-        q, k, v = rearrange('b n (qkv h d) -> qkv b h n d', qkv, qkv = 3, h = self.heads)
+        q, k, v = rearrange(qkv, 'b n (qkv h d) -> qkv b h n d', qkv = 3, h = self.heads)
 
         if self.force_regular_attn or not is_distributed():
             out = default_attention(q, k, v, mask = mask, causal = self.causal)
@@ -242,7 +242,7 @@ class RingAttention(Module):
 
         # combine heads
 
-        out = rearrange('b h n d -> b n (h d)', out)
+        out = rearrange(out, 'b h n d -> b n (h d)')
         out = self.to_out(out)
 
         if auto_shard_seq:
@@ -349,10 +349,10 @@ class RingTransformer(Module):
             # for workload balancing https://arxiv.org/abs/2311.09431 - MIT paper from Brandon et al.
 
             if self.striped_ring_attn:
-                x = rearrange('b (i j) -> b (j i)', x, i = self.bucket_size)
+                x = rearrange(x, 'b (i j) -> b (j i)', i = self.bucket_size)
 
                 if exists(mask):
-                    mask = rearrange('b (i j) -> b (j i)', mask, i = self.bucket_size)
+                    mask = rearrange(mask, 'b (i j) -> b (j i)', i = self.bucket_size)
 
             # gather across batch and divide across world
 
@@ -375,7 +375,7 @@ class RingTransformer(Module):
             logits, _ = sharded_seq_to_sharded_batch(logits, batch_sizes)
 
             if self.striped_ring_attn:
-                logits = rearrange('b (i j) d -> b (j i) d', logits, j = self.bucket_size)
+                logits = rearrange(logits, 'b (i j) d -> b (j i) d', j = self.bucket_size)
 
             logits = logits[:, :seq_len]
 

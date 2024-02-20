@@ -6,9 +6,6 @@ from torch.autograd import Function
 
 import torch.distributed as dist
 
-import einx
-from einx import rearrange
-
 def exists(val):
     return val is not None
 
@@ -104,7 +101,7 @@ class SplitByRankFunction(Function):
 
     @staticmethod
     def backward(ctx, grads, _):
-        grads = rearrange('... -> 1 ...', grads)
+        grads = grads[None, ...]
         grads = all_gather_variable_dim(grads, sizes = ctx.sizes)
         return grads
 

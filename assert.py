@@ -81,7 +81,7 @@ def start(
 
     ring_out.mean().backward()
 
-    # validate output is the same for local vs distributed
+    # validate output is the same for sequence split across machines vs without
 
     if rank == 0:
 

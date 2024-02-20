@@ -6,9 +6,6 @@ from torch.nn import Module, ModuleList
 from torch.autograd import Function
 import torch.distributed as dist
 
-import einx
-from einx import rearrange
-
 # helper functions
 
 def exists(v):
