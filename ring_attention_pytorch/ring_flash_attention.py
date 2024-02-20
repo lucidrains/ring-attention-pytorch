@@ -16,6 +16,11 @@ from ring_attention_pytorch.ring import (
     get_rank
 )
 
+from ring_attention_pytorch.rotary import (
+    RotaryEmbedding,
+    apply_rotary_pos_emb
+)
+
 # constants
 
 EPSILON = 1e-10

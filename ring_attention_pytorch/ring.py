@@ -94,11 +94,12 @@ def null_ring_pass(*tensors, max_iters = None):
 def all_ring_pass(*tensors, max_iters = None):
     world_size = get_world_size()
     max_iters = default(max_iters, world_size)
-    total_iters = min(world_size, max_iters)
+
+    # make sure iteration is between 1 and world size
+
+    total_iters = max(1, min(world_size, max_iters))
 
     curr_ring_pos = get_rank()
-
-    assert total_iters > 0
 
     for ind in range(total_iters):
         is_last = ind == (total_iters - 1)
