@@ -69,6 +69,8 @@ $ python assert.py
     - [x] backwards
     - [ ] forwards
 
+- [ ] allow for variable ring passes per layer, for <a href="https://arxiv.org/abs/2007.03356">local -> global attention</a> in ring transformer as one goes up the layers.
+
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] figure out batch_isend_irecv
