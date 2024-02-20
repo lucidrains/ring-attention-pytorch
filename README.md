@@ -68,8 +68,8 @@ $ python assert.py
     - [x] backwards
     - [x] forwards
 
-
 - [ ] allow for variable ring passes per layer, for <a href="https://arxiv.org/abs/2007.03356">local -> global attention</a> in ring transformer as one goes up the layers.
+    - [ ] also allow for mixed striped layers, so one can do local strided attention (used in some image transformers but not language) would be a good fit for the initial local attention layers, in addition to classic lookback local
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] figure out batch_isend_irecv
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
