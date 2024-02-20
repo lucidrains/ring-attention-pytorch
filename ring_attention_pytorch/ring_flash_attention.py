@@ -91,26 +91,26 @@ class RingFlashAttentionFunction(Function):
 
         num_tiles = math.ceil(per_machine_seq_size / bucket_size)
 
-        row_splits = zip(
-            q.split(bucket_size, dim = -2),
-            o.split(bucket_size, dim = -2),
-            all_row_sums.split(bucket_size, dim = -2),
-            all_row_maxes.split(bucket_size, dim = -2),
-        )
+        for ring_rank, (k, v, mask) in ring_pass_fn(k, v, mask, max_iters = max_ring_passes):
 
-        for ind, (qc, oc, row_sums, row_maxes) in enumerate(row_splits):
-            row_bucket_index = row_ring_rank * per_machine_buckets + ind
+            col_splits = zip(
+                k.split(bucket_size, dim = -2),
+                v.split(bucket_size, dim = -2),
+                maybe_split(mask, bucket_size, dim = -1)
+            )
 
-            for ring_rank, (k, v, mask) in ring_pass_fn(k, v, mask, max_iters = max_ring_passes):
+            for k_ind, (kc, vc, col_mask) in enumerate(col_splits):
+                col_bucket_index = ring_rank * per_machine_buckets + k_ind
 
-                col_splits = zip(
-                    k.split(bucket_size, dim = -2),
-                    v.split(bucket_size, dim = -2),
-                    maybe_split(mask, bucket_size, dim = -1)
+                row_splits = zip(
+                    q.split(bucket_size, dim = -2),
+                    o.split(bucket_size, dim = -2),
+                    all_row_sums.split(bucket_size, dim = -2),
+                    all_row_maxes.split(bucket_size, dim = -2),
                 )
 
-                for k_ind, (kc, vc, col_mask) in enumerate(col_splits):
-                    col_bucket_index = ring_rank * per_machine_buckets + k_ind
+                for ind, (qc, oc, row_sums, row_maxes) in enumerate(row_splits):
+                    row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
 
@@ -151,11 +151,7 @@ class RingFlashAttentionFunction(Function):
                     row_maxes.copy_(new_row_maxes)
                     row_sums.copy_(new_row_sums)
 
-                k = one_ring_pass(k)
-                v = one_ring_pass(v)
-                mask = maybe(one_ring_pass)(mask)
-
-            oc.div_(row_sums)
+        o.div_(all_row_sums)
 
         lse = all_row_sums.log() + all_row_maxes
 
