@@ -65,8 +65,8 @@ $ python assert.py
 - [x] move flash attention back to key / value column traversal on outer loop and save on ring communication
     - [x] backwards
     - [x] forwards
+- [x] fix rotary positions for striped ring attention when flash buckets > 1
 
-- [ ] fix rotary positions for striped ring attention when flash buckets > 1
 - [ ] option to auto-decide ring sequence size based on world size
     - [ ] allow for finely specifying how to distribute sharding of batch and sequence, depending on world size
 - [ ] allow for variable ring passes per layer, for <a href="https://arxiv.org/abs/2007.03356">local -> global attention</a> in ring transformer as one goes up the layers.

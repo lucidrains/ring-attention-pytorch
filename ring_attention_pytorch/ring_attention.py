@@ -5,7 +5,7 @@ from torch import nn, einsum, Tensor
 import torch.nn.functional as F
 from torch.nn import Module, ModuleList
 
-from einops import rearrange
+from einops import rearrange, repeat
 
 from ring_attention_pytorch.ring import (
     all_ring_pass,
@@ -375,20 +375,27 @@ class RingTransformer(Module):
         # rotary positions
         # taking into account ring and striping
 
-        maybe_chunk_seq_len = x.shape[-1]
-
-        pos = torch.arange(maybe_chunk_seq_len, device = device)
+        pos = None
+        curr_seq_len = x.shape[-1]
 
         if auto_shard_seq:
             if self.striped_ring_attn:
-                ring_stride = get_world_size()
-                ring_offset = 1
-            else:
-                ring_stride = 1
-                ring_offset = maybe_chunk_seq_len
+                buckets = self.ring_seq_size // self.bucket_size
+                ring_stride = get_world_size() * buckets
+                ring_offset = buckets
 
-            pos *= ring_stride
-            pos += ring_offset * get_rank()
+                pos = torch.arange(curr_seq_len // buckets, device = device)
+                pos = repeat(pos, 'n -> n b', b = buckets)
+
+                pos = pos * ring_stride
+                pos += torch.arange(buckets, device = device) + (get_rank() * buckets)
+                pos = rearrange(pos, 'n b -> (b n)')
+
+            else:
+                pos = torch.arange(curr_seq_len, device = device)
+                pos += curr_seq_len * get_rank()
+        else:
+            pos = torch.arange(curr_seq_len, device = device)
 
         rotary_emb = self.rotary_emb(pos)
 
