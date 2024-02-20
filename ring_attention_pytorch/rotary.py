@@ -16,11 +16,11 @@ class RotaryEmbedding(Module):
     @autocast(enabled = False)
     def forward(
         self,
-        seq_len,
+        pos,
         offset = 0
     ):
-        t = torch.arange(seq_len + offset, device = self.inv_freq.device).type_as(self.inv_freq)
-        freqs = torch.einsum('i , j -> i j', t, self.inv_freq)
+        pos = pos.type_as(self.inv_freq)
+        freqs = torch.einsum('i , j -> i j', pos, self.inv_freq)
         return torch.cat((freqs, freqs), dim = -1)
 
 def rotate_half(x):

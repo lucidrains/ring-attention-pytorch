@@ -23,6 +23,11 @@ from ring_attention_pytorch.distributed import (
     AllGather
 )
 
+from ring_attention_pytorch.rotary import (
+    RotaryEmbedding,
+    apply_rotary_pos_emb
+)
+
 # helper functions
 
 def exists(v):
@@ -203,7 +208,8 @@ class RingAttention(Module):
     def forward(
         self,
         x,
-        mask = None
+        mask = None,
+        rotary_emb = None
     ):
         """
         einstein notation
@@ -226,6 +232,14 @@ class RingAttention(Module):
 
         qkv = self.to_qkv(x)
         q, k, v = rearrange(qkv, 'b n (qkv h d) -> qkv b h n d', qkv = 3, h = self.heads)
+
+        # rotary relative positions
+
+        if exists(rotary_emb):
+            q = apply_rotary_pos_emb(rotary_emb, q)
+            k = apply_rotary_pos_emb(rotary_emb, k)
+
+        # regular attention vs flash w/ or w/o kv ring reduce
 
         if self.force_regular_attn or not is_distributed():
             out = default_attention(q, k, v, mask = mask, causal = self.causal)
@@ -304,6 +318,7 @@ class RingTransformer(Module):
         assert not (self.striped_ring_attn and not causal), 'striped ring attention only applies to autoregressive models'
 
         self.token_emb = nn.Embedding(num_tokens, dim)
+        self.rotary_emb = RotaryEmbedding(dim_head)
 
         self.layers = ModuleList([])
 
@@ -334,13 +349,12 @@ class RingTransformer(Module):
         x,
         mask = None
     ):
-        seq_len = x.shape[-1]
+        seq_len, device = x.shape[-1], x.device
         auto_shard_seq = self.auto_shard_seq & is_distributed()
 
         # take care of padding to divide sequence across the machines
 
         if auto_shard_seq:
-
             # first pad to right multiple
 
             x, mask = maybe_pad_seq_and_mask(x, mask, self.ring_seq_size)
@@ -358,12 +372,32 @@ class RingTransformer(Module):
 
             (x, mask), batch_sizes = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
 
+        # rotary positions
+        # taking into account ring and striping
+
+        maybe_chunk_seq_len = x.shape[-1]
+
+        pos = torch.arange(maybe_chunk_seq_len, device = device)
+
+        if auto_shard_seq:
+            if self.striped_ring_attn:
+                ring_stride = get_world_size()
+                ring_offset = 1
+            else:
+                ring_stride = 1
+                ring_offset = maybe_chunk_seq_len
+
+            pos *= ring_stride
+            pos += ring_offset * get_rank()
+
+        rotary_emb = self.rotary_emb(pos)
+
         # main transformer logic
 
         x = self.token_emb(x)
 
         for attn, ff in self.layers:
-            x = attn(x, mask = mask) + x
+            x = attn(x, mask = mask, rotary_emb = rotary_emb) + x
             x = ff(x) + x
 
         logits = self.to_logits(x)
