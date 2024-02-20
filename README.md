@@ -66,6 +66,9 @@ $ python assert.py
 - [x] fix issue with ring attention when flash buckets > 1
 
 - [ ] move flash attention back to key / value column traversal on outer loop and save on ring communication
+    - [x] backwards
+    - [ ] forwards
+
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] figure out batch_isend_irecv

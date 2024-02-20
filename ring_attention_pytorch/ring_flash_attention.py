@@ -213,21 +213,21 @@ class RingFlashAttentionFunction(Function):
             dq.split(bucket_size, dim = -2)
         )
 
-        for ind, (qc, oc, doc, lsec, dqc) in enumerate(row_splits):
-            row_bucket_index = row_ring_rank * per_machine_buckets + ind
+        for ring_rank, (k, v, mask, dk, dv) in ring_pass_fn(k, v, mask, dk, dv, max_iters = max_ring_passes):
 
-            for ring_rank, (k, v, mask, dk, dv) in ring_pass_fn(k, v, mask, dk, dv, max_iters = max_ring_passes):
+            col_splits = zip(
+                k.split(bucket_size, dim = -2),
+                v.split(bucket_size, dim = -2),
+                dk.split(bucket_size, dim = -2),
+                dv.split(bucket_size, dim = -2),
+                maybe_split(mask, bucket_size, dim = -1)
+            )
 
-                col_splits = zip(
-                    k.split(bucket_size, dim = -2),
-                    v.split(bucket_size, dim = -2),
-                    dk.split(bucket_size, dim = -2),
-                    dv.split(bucket_size, dim = -2),
-                    maybe_split(mask, bucket_size, dim = -1)
-                )
+            for k_ind, (kc, vc, dkc, dvc, col_mask) in enumerate(col_splits):
+                col_bucket_index = ring_rank * per_machine_buckets + k_ind
 
-                for k_ind, (kc, vc, dkc, dvc, col_mask) in enumerate(col_splits):
-                    col_bucket_index = ring_rank * per_machine_buckets + k_ind
+                for ind, (qc, oc, doc, lsec, dqc) in enumerate(row_splits):
+                    row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
 
@@ -260,10 +260,6 @@ class RingFlashAttentionFunction(Function):
                     dqc.add_(dq_chunk)
                     dkc.add_(dk_chunk)
                     dvc.add_(dv_chunk)
-
-                k = one_ring_pass(k)
-                v = one_ring_pass(v)
-                mask = maybe(one_ring_pass)(mask)
 
             dk = one_ring_pass(dk)
             dv = one_ring_pass(dv)
