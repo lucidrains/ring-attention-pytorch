@@ -54,12 +54,10 @@ $ python assert.py
 - [x] modify flash attention to output intermediates and figure out backwards with recompute and ring passes
 - [x] functions for splitting the sequence evenly among ranks, either within attention function, or in the external ring transformer wrapper
 - [x] basic test case with two processes and check for equivalent output and gradients
-
-- [ ] testing
+- [x] testing
     - [x] make sure key padding mask works
     - [x] make sure causal mask works
-    - [ ] option to auto-decide ring sequence size based on world size
-    - [ ] rotary embeddings, with proper key/value offset depending on ring rank
+    - [x] rotary embeddings, with proper key/value offset depending on ring rank
 - [x] striped attention
     - [x] add the permutating logic before and after transformer
     - [x] add causal masking logic - account for sub bucketing by flash attention
@@ -68,6 +66,8 @@ $ python assert.py
     - [x] backwards
     - [x] forwards
 
+- [ ] option to auto-decide ring sequence size based on world size
+    - [ ] allow for finely specifying how to distribute sharding of batch and sequence, depending on world size
 - [ ] allow for variable ring passes per layer, for <a href="https://arxiv.org/abs/2007.03356">local -> global attention</a> in ring transformer as one goes up the layers.
     - [ ] also allow for mixed striped layers, so one can do local strided attention (used in some image transformers but not language) would be a good fit for the initial local attention layers, in addition to classic lookback local
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
