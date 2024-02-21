@@ -127,6 +127,8 @@ class RingFlashAttentionFunction(Function):
 
                     if causal:
                         if striped_ring_attn:
+                            # `GetMaskStripedAttention` pseudocode at end of section 2.2.1 of https://arxiv.org/abs/2311.09431
+
                             triu_offset = int(row_bucket_index >= col_bucket_index)
                             causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(triu_offset)
                             attn_weights.masked_fill_(causal_mask, max_neg_value)
@@ -241,6 +243,8 @@ class RingFlashAttentionFunction(Function):
 
                     if causal:
                         if striped_ring_attn:
+                            # `GetMaskStripedAttention` pseudocode at end of section 2.2.1 of https://arxiv.org/abs/2311.09431
+
                             triu_offset = int(row_bucket_index >= col_bucket_index)
                             causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(triu_offset)
                             attn_weights.masked_fill_(causal_mask, max_neg_value)
