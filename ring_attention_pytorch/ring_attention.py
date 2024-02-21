@@ -494,7 +494,7 @@ class RingTransformer(Module):
 
             return ce_loss
 
-        # otherwise gather all sequence chunks for logits across machines and shard back to original batch for cross entropy loss
+        # otherwise gather all sequence chunks for logits across machines and shard the batch dimension
 
         if auto_shard_seq:
 
