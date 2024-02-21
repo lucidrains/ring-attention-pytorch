@@ -3,6 +3,7 @@ from typing import Optional
 import torch
 from torch import nn, einsum, Tensor
 import torch.nn.functional as F
+from torch.cuda.amp import autocast
 from torch.nn import Module, ModuleList
 
 from einops import rearrange, repeat
@@ -21,11 +22,6 @@ from ring_attention_pytorch.ring_flash_attention import (
 from ring_attention_pytorch.distributed import (
     split_by_rank,
     AllGather
-)
-
-from ring_attention_pytorch.rotary import (
-    RotaryEmbedding,
-    apply_rotary_pos_emb
 )
 
 # helper functions
@@ -74,6 +70,69 @@ def default_attention(
     out = einsum('b h i j, b h j d -> b h i d', attn, v)
 
     return out
+
+# rotary embeddings with modifications to support striped attention
+
+class RingRotaryEmbedding(Module):
+    def __init__(
+        self,
+        dim,
+        ring: bool = False,
+        striped: bool = False,
+        buckets: int = 1,        # in striped attention with flash buckets > 1, one needs to specify the number of buckets per machine
+        theta = 10000
+    ):
+        super().__init__()
+        self.ring = ring
+        self.striped = striped
+        self.buckets = buckets
+
+        inv_freq = theta ** -(torch.arange(0, dim, 2).float() / dim)
+        self.register_buffer('inv_freq', inv_freq)
+
+    @property
+    def device(self):
+        return self.inv_freq.device
+
+    @autocast(enabled = False)
+    def forward(
+        self,
+        seq_len: int,
+        offset = 0
+    ):
+        device = self.device
+        pos = None
+
+        if self.ring:
+            if self.striped:
+                buckets = self.buckets
+                ring_stride = get_world_size() * buckets
+                ring_offset = buckets
+
+                pos = torch.arange(seq_len // buckets, device = device)
+                pos = repeat(pos, 'n -> n b', b = buckets)
+
+                pos = pos * ring_stride
+                pos += torch.arange(buckets, device = device) + (get_rank() * buckets)
+                pos = rearrange(pos, 'n b -> (b n)')
+
+            else:
+                pos = torch.arange(seq_len, device = device)
+                pos += seq_len * get_rank()
+        else:
+            pos = torch.arange(seq_len, device = device)
+
+        pos = pos.type_as(self.inv_freq)
+        freqs = torch.einsum('i , j -> i j', pos, self.inv_freq)
+        return torch.cat((freqs, freqs), dim = -1)
+
+def rotate_half(x):
+    x1, x2 = x.chunk(2, dim = -1)
+    return torch.cat((-x2, x1), dim=-1)
+
+@autocast(enabled = False)
+def apply_rotary_pos_emb(pos, t):
+    return t * pos.cos() + rotate_half(t) * pos.sin()
 
 # batch to sequence sharding and back
 
@@ -301,7 +360,8 @@ class RingTransformer(Module):
         striped_ring_attn = False,
         ring_seq_size = 512,
         auto_shard_seq = None,
-        max_ring_passes = None
+        max_ring_passes = None,
+        rotary_embed_theta = 10000    # will need to be changed for the million token context
     ):
         super().__init__()
         self.ring_attn = ring_attn
@@ -318,7 +378,14 @@ class RingTransformer(Module):
         assert not (self.striped_ring_attn and not causal), 'striped ring attention only applies to autoregressive models'
 
         self.token_emb = nn.Embedding(num_tokens, dim)
-        self.rotary_emb = RotaryEmbedding(dim_head)
+
+        self.rotary_emb = RingRotaryEmbedding(
+            dim = dim_head,
+            ring = ring_attn,
+            striped = striped_ring_attn,
+            theta = rotary_embed_theta,
+            buckets = ring_seq_size // bucket_size
+        )
 
         self.layers = ModuleList([])
 
@@ -375,29 +442,7 @@ class RingTransformer(Module):
         # rotary positions
         # taking into account ring and striping
 
-        pos = None
-        curr_seq_len = x.shape[-1]
-
-        if auto_shard_seq:
-            if self.striped_ring_attn:
-                buckets = self.ring_seq_size // self.bucket_size
-                ring_stride = get_world_size() * buckets
-                ring_offset = buckets
-
-                pos = torch.arange(curr_seq_len // buckets, device = device)
-                pos = repeat(pos, 'n -> n b', b = buckets)
-
-                pos = pos * ring_stride
-                pos += torch.arange(buckets, device = device) + (get_rank() * buckets)
-                pos = rearrange(pos, 'n b -> (b n)')
-
-            else:
-                pos = torch.arange(curr_seq_len, device = device)
-                pos += curr_seq_len * get_rank()
-        else:
-            pos = torch.arange(curr_seq_len, device = device)
-
-        rotary_emb = self.rotary_emb(pos)
+        rotary_emb = self.rotary_emb(x.shape[-1])
 
         # main transformer logic
 
