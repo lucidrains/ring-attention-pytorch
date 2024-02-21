@@ -40,23 +40,23 @@ def is_distributed():
 
 # ring functions
 
-def circular_index_left(pos, ring_size):
-    return ((pos - 1) + ring_size) % ring_size
+def circular_index_left(pos, ring_size, num = 1):
+    return ((pos - num) + ring_size) % ring_size
 
-def circular_index_right(pos, ring_size):
-    return (pos + 1) % ring_size
+def circular_index_right(pos, ring_size, num = 1):
+    return (pos + num) % ring_size
 
 # distributed ring
 
-def circular_rank_left(rank = None, ring_size = None):
+def circular_rank_left(rank = None, ring_size = None, num = 1):
     rank = default(rank, get_rank())
     ring_size = default(ring_size, get_world_size())
-    return circular_index_left(rank, ring_size)
+    return circular_index_left(rank, ring_size, num)
 
-def circular_rank_right(rank = None, ring_size = None):
+def circular_rank_right(rank = None, ring_size = None, num = 1):
     rank = default(rank, get_rank())
     ring_size = default(ring_size, get_world_size())
-    return circular_index_right(rank, ring_size)
+    return circular_index_right(rank, ring_size, num)
 
 # one ring pass
 
@@ -67,11 +67,11 @@ def send_and_receive_(x, receive_buffer, send_to_rank, receive_from_rank):
     send_request.wait()
     dist.barrier()
 
-class OneRingPass(Function):
+class RingPass(Function):
     """ one ring pass to the right and receive from the left - assume tensor is all same shape for now """
 
     @staticmethod
-    def forward(ctx, x):
+    def forward(ctx, num_ring_passes, x):
         x = x.contiguous()
         receive_buffer = torch.zeros_like(x)
         send_and_receive_(x, receive_buffer, circular_rank_right(), circular_rank_left())
@@ -82,9 +82,11 @@ class OneRingPass(Function):
         grads = grads.contiguous()
         receive_buffer = torch.zeros_like(grads)
         send_and_receive_(grads, receive_buffer, circular_rank_left(), circular_rank_right())
-        return receive_buffer
+        return None, receive_buffer
 
-one_ring_pass = OneRingPass.apply
+ring_pass = RingPass.apply
+
+one_ring_pass = partial(RingPass.apply, 1)
 
 # iterator for all ring passes of all tensors
 

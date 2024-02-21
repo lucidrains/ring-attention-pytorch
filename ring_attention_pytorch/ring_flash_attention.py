@@ -10,10 +10,12 @@ from einops import rearrange
 
 from ring_attention_pytorch.ring import (
     maybe,
+    ring_pass,
     all_ring_pass,
     null_ring_pass,
     one_ring_pass,
-    get_rank
+    get_rank,
+    get_world_size
 )
 
 # constants
@@ -267,7 +269,8 @@ class RingFlashAttentionFunction(Function):
 
             dkv = kv_and_dkv[2:]
 
-            dkv = one_ring_pass(dkv)
+            max_ring_passes = default(max_ring_passes, get_world_size())
+            dkv = ring_pass(get_world_size() - max_ring_passes + 1, dkv)
 
             dk, dv = dkv
 
