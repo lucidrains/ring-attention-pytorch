@@ -91,7 +91,11 @@ class RingFlashAttentionFunction(Function):
 
         num_tiles = math.ceil(per_machine_seq_size / bucket_size)
 
-        for ring_rank, (k, v, mask) in ring_pass_fn(k, v, mask, max_iters = max_ring_passes):
+        kv = torch.stack((k, v))
+
+        for ring_rank, (kv, mask) in ring_pass_fn(kv, mask, max_iters = max_ring_passes):
+
+            k, v = kv
 
             col_splits = zip(
                 k.split(bucket_size, dim = -2),
@@ -209,7 +213,11 @@ class RingFlashAttentionFunction(Function):
             dq.split(bucket_size, dim = -2)
         )
 
-        for ring_rank, (k, v, mask, dk, dv) in ring_pass_fn(k, v, mask, dk, dv, max_iters = max_ring_passes):
+        kv_and_dkv = torch.stack((k, v, dk, dv))
+
+        for ring_rank, (kv_and_dkv, mask) in ring_pass_fn(kv_and_dkv, mask, max_iters = max_ring_passes):
+
+            k, v, dk, dv = kv_and_dkv
 
             col_splits = zip(
                 k.split(bucket_size, dim = -2),
@@ -257,8 +265,11 @@ class RingFlashAttentionFunction(Function):
                     dkc.add_(dk_chunk)
                     dvc.add_(dv_chunk)
 
-            dk = one_ring_pass(dk)
-            dv = one_ring_pass(dv)
+            dkv = kv_and_dkv[2:]
+
+            dkv = one_ring_pass(dkv)
+
+            dk, dv = dkv
 
         return dq, dk, dv, None, None, None, None, None, None, None
 
