@@ -256,7 +256,6 @@ class RingAttention(Module):
         assert not (not self.ring_attn and self.auto_shard_seq)
 
         self.ring_seq_size = ring_seq_size
-
         self.bucket_size = bucket_size
 
         dim_inner = dim_head * heads
@@ -288,6 +287,14 @@ class RingAttention(Module):
         seq_len = x.shape[-1]
 
         if auto_shard_seq:
+            x, mask = maybe_pad_seq_and_mask(x, mask, self.ring_seq_size)
+
+            if self.striped_ring_attn:
+                x = rearrange(x, 'b (i j) d -> b (j i) d', i = self.bucket_size)
+
+                if exists(mask):
+                    mask = rearrange(mask, 'b (i j) -> b (j i)', i = self.bucket_size)
+
             (x, mask), batch_sizes = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
 
         device = x.device
