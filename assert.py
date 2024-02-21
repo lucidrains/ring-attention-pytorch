@@ -35,7 +35,7 @@ def start(
         num_tokens = 256,
         dim = dim,
         causal = causal,
-        depth = 1,
+        depth = 2,
         dim_head = 8,
         ring_attn = True,
         striped_ring_attn = striped_ring_attn,
@@ -47,7 +47,7 @@ def start(
         num_tokens = 256,
         dim = dim,
         causal = causal,
-        depth = 1,
+        depth = 2,
         dim_head = 8,
         ring_attn = False
     )

@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 from torch import nn, einsum, Tensor
@@ -31,6 +31,9 @@ def exists(v):
 
 def default(v, d):
     return v if exists(v) else d
+
+def cast_tuple(t, length = 1):
+    return t if isinstance(t, tuple) else ((t,) * length)
 
 def divisible_by(num, den):
     return (num % den) == 0
@@ -360,7 +363,7 @@ class RingTransformer(Module):
         striped_ring_attn = False,
         ring_seq_size = 512,
         auto_shard_seq = None,
-        max_ring_passes = None,
+        max_ring_passes: Optional[Union[Tuple[int, ...], int]] = None,
         rotary_embed_theta = 10000,    # will need to be changed for the million token context
         ignore_index = -1
     ):
@@ -390,7 +393,12 @@ class RingTransformer(Module):
 
         self.layers = ModuleList([])
 
-        for _ in range(depth):
+        max_ring_passes = default(max_ring_passes, get_world_size())
+        max_ring_passes = cast_tuple(max_ring_passes, depth)
+        assert len(max_ring_passes) == depth
+
+        for layer_max_ring_passes in max_ring_passes:
+
             self.layers.append(ModuleList([
                 RingAttention(
                     dim = dim,
@@ -400,7 +408,7 @@ class RingTransformer(Module):
                     bucket_size = bucket_size,
                     ring_attn = ring_attn,
                     ring_seq_size = ring_seq_size,
-                    max_ring_passes = 2,
+                    max_ring_passes = layer_max_ring_passes,
                     striped_ring_attn = striped_ring_attn,
                     auto_shard_seq = False,
                 ),
@@ -496,13 +504,12 @@ class RingTransformer(Module):
 
         # otherwise gather all sequence chunks for logits across machines and shard the batch dimension
 
-        if auto_shard_seq:
+        if not auto_shard_seq:
+            return logits
 
-            logits, _ = sharded_seq_to_sharded_batch(logits, batch_sizes)
+        logits, _ = sharded_seq_to_sharded_batch(logits, batch_sizes)
 
-            if self.striped_ring_attn:
-                logits = rearrange(logits, 'b (i j) d -> b (j i) d', j = self.bucket_size)
+        if self.striped_ring_attn:
+            logits = rearrange(logits, 'b (i j) d -> b (j i) d', j = self.bucket_size)
 
-            logits = logits[:, :seq_len]
-
-        return logits
+        return logits[:, :seq_len]
