@@ -74,6 +74,7 @@ $ python assert.py
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
+- [ ] when doing ring passes, alternate between designated send and receive buffers
 - [ ] `batch_isend_irecv` in the presence of key padding mask needing ring exchange, but not a big priority
 
 ## Citations

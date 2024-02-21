@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 from torch import nn, einsum, Tensor
@@ -400,7 +400,7 @@ class RingTransformer(Module):
                     bucket_size = bucket_size,
                     ring_attn = ring_attn,
                     ring_seq_size = ring_seq_size,
-                    max_ring_passes = max_ring_passes,
+                    max_ring_passes = 2,
                     striped_ring_attn = striped_ring_attn,
                     auto_shard_seq = False,
                 ),
