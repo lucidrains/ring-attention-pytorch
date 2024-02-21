@@ -62,8 +62,10 @@ class RingFlashAttentionFunction(Function):
         max_ring_passes: Optional[int],
         striped_ring_attn: bool,
     ):
-        """ Algorithm 1 in the v2 paper """
         assert q.shape[-2] == k.shape[-2]
+        assert k.shape[-1] == v.shape[-1]
+
+        """ Algorithm 1 in the flash attention v2 paper + ring passing """
 
         # ignore key padding mask if autoregressive
 
