@@ -361,7 +361,8 @@ class RingTransformer(Module):
         ring_seq_size = 512,
         auto_shard_seq = None,
         max_ring_passes = None,
-        rotary_embed_theta = 10000    # will need to be changed for the million token context
+        rotary_embed_theta = 10000,    # will need to be changed for the million token context
+        ignore_index = -1
     ):
         super().__init__()
         self.ring_attn = ring_attn
@@ -411,13 +412,27 @@ class RingTransformer(Module):
             nn.Linear(dim, num_tokens, bias = False)
         )
 
+        # training related
+
+        self.ignore_index = ignore_index
+
     def forward(
         self,
         x,
-        mask = None
+        mask = None,
+        labels = None,
+        return_loss = False
     ):
         seq_len, device = x.shape[-1], x.device
+
         auto_shard_seq = self.auto_shard_seq & is_distributed()
+
+        # get labels if not passed in
+
+        return_loss |= exists(labels)
+
+        if return_loss and not exists(labels):
+            x, labels = x[:, :-1], x[:, 1:]
 
         # take care of padding to divide sequence across the machines
 
@@ -426,11 +441,20 @@ class RingTransformer(Module):
 
             x, mask = maybe_pad_seq_and_mask(x, mask, self.ring_seq_size)
 
+            # labels
+
+            if exists(labels):
+                labels, label_mask = maybe_pad_seq_and_mask(labels, mask[:, 1:], self.ring_seq_size)
+                labels.masked_fill_(~label_mask, self.ignore_index)
+
             # account for striped attention
             # for workload balancing https://arxiv.org/abs/2311.09431 - MIT paper from Brandon et al.
 
             if self.striped_ring_attn:
                 x = rearrange(x, 'b (i j) -> b (j i)', i = self.bucket_size)
+
+                if exists(labels):
+                    labels = rearrange(labels, 'b (i j) -> b (j i)', i = self.bucket_size)
 
                 if exists(mask):
                     mask = rearrange(mask, 'b (i j) -> b (j i)', i = self.bucket_size)
@@ -438,6 +462,9 @@ class RingTransformer(Module):
             # gather across batch and divide across world
 
             (x, mask), batch_sizes = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
+
+            if exists(labels):
+                (labels, _), _ = sharded_batch_to_sharded_seq(labels, None, self.ring_seq_size)
 
         # rotary positions
         # taking into account ring and striping
@@ -454,7 +481,20 @@ class RingTransformer(Module):
 
         logits = self.to_logits(x)
 
-        # now gather all sequence chunks across machines and shard back to original batch for cross entropy loss
+        # handle returning of loss
+
+        if return_loss:
+            logits = rearrange(logits, 'b n c -> b c n')
+
+            ce_loss = F.cross_entropy(
+                logits,
+                labels,
+                ignore_index = self.ignore_index
+            )
+
+            return ce_loss
+
+        # otherwise gather all sequence chunks for logits across machines and shard back to original batch for cross entropy loss
 
         if auto_shard_seq:
 
