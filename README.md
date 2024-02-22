@@ -1,3 +1,5 @@
+<img src="./ring.png" width="450px"></img>
+
 ## Ring Attention - Pytorch (wip)
 
 Explorations into <a href="https://arxiv.org/abs/2310.01889">Ring Attention</a>, from Liu et al. at Berkeley AI.
