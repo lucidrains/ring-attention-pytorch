@@ -6,7 +6,7 @@ import torch
 from torch import nn, einsum, Tensor
 from torch.autograd.function import Function
 
-from einops import rearrange
+from einx import rearrange
 
 from ring_attention_pytorch.ring import (
     maybe,
@@ -73,7 +73,7 @@ class RingFlashAttentionFunction(Function):
             mask = None
 
         if exists(mask):
-            mask = rearrange(mask, 'b j -> b 1 1 j')
+            mask = rearrange('b j -> b 1 1 j', mask)
 
         per_machine_seq_size = q.shape[-2]
         bucket_size = min(per_machine_seq_size, bucket_size)
