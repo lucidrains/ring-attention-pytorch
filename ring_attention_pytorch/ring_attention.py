@@ -6,7 +6,10 @@ import torch.nn.functional as F
 from torch.cuda.amp import autocast
 from torch.nn import Module, ModuleList
 
-from einops import rearrange, repeat
+import einx
+from einx import rearrange
+
+from beartype import beartype
 
 from ring_attention_pytorch.ring import (
     all_ring_pass,
@@ -61,12 +64,11 @@ def default_attention(
         sim = torch.where(causal_mask, mask_value, sim)
 
     elif exists(mask):
-        mask = rearrange(mask, 'b j -> b 1 1 j')
-        sim = torch.where(mask, sim, mask_value)
+        sim = einx.where('b j, b h i j, -> b h i j', mask, sim, mask_value)
 
     # attend
 
-    attn = sim.softmax(dim = -1)
+    attn = einx.softmax('b h i [j]', sim)
 
     # aggregate
 
@@ -113,11 +115,11 @@ class RingRotaryEmbedding(Module):
                 ring_offset = buckets
 
                 pos = torch.arange(seq_len // buckets, device = device)
-                pos = repeat(pos, 'n -> n b', b = buckets)
+                pos = rearrange('n -> n b', pos, b = buckets)
 
                 pos = pos * ring_stride
                 pos += torch.arange(buckets, device = device) + (get_rank() * buckets)
-                pos = rearrange(pos, 'n b -> (b n)')
+                pos = rearrange('n b -> (b n)', pos)
 
             else:
                 pos = torch.arange(seq_len, device = device)
@@ -221,22 +223,23 @@ def sharded_seq_to_sharded_batch(
 # main class
 
 class RingAttention(Module):
+    @beartype
     def __init__(
         self,
-        dim,
+        dim: int,
         *,
-        dim_head = 64,
-        heads = 8,
-        causal = False,
-        eps = 1e-10,
-        bucket_size = 512,
-        ring_attn = False,
-        ring_seq_size = 512,
-        max_ring_passes = None,
-        striped_ring_attn = False,
-        auto_shard_seq = None,
-        prenorm = True,
-        force_regular_attn = False,
+        dim_head: int = 64,
+        heads: int = 8,
+        causal: bool = False,
+        eps: float = 1e-10,
+        bucket_size: int = 512,
+        ring_attn: bool = False,
+        ring_seq_size: int = 512,
+        max_ring_passes: Optional[int] = None,
+        striped_ring_attn: bool = False,
+        auto_shard_seq: Optional[bool] = None,
+        prenorm: bool = True,
+        force_regular_attn: bool = False,
     ):
         super().__init__()
         self.eps = eps
@@ -290,17 +293,17 @@ class RingAttention(Module):
             x, mask = maybe_pad_seq_and_mask(x, mask, self.ring_seq_size)
 
             if self.striped_ring_attn:
-                x = rearrange(x, 'b (i j) d -> b (j i) d', i = self.bucket_size)
+                x = rearrange('b (i j) d -> b (j i) d', x, i = self.bucket_size)
 
                 if exists(mask):
-                    mask = rearrange(mask, 'b (i j) -> b (j i)', i = self.bucket_size)
+                    mask = rearrange('b (i j) -> b (j i)', mask, i = self.bucket_size)
 
             (x, mask), batch_sizes = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
 
         device = x.device
 
         qkv = self.to_qkv(x)
-        q, k, v = rearrange(qkv, 'b n (qkv h d) -> qkv b h n d', qkv = 3, h = self.heads)
+        q, k, v = rearrange('b n (qkv h d) -> qkv b h n d', qkv, qkv = 3, h = self.heads)
 
         # rotary relative positions
 
@@ -325,7 +328,7 @@ class RingAttention(Module):
 
         # combine heads
 
-        out = rearrange(out, 'b h n d -> b n (h d)')
+        out = rearrange('b h n d -> b n (h d)', out)
         out = self.to_out(out)
 
         if auto_shard_seq:
@@ -355,24 +358,25 @@ def FeedForward(dim, mult = 4):
     )
 
 class RingTransformer(Module):
+    @beartype
     def __init__(
         self,
         *,
-        num_tokens,
-        dim,
-        depth,
-        causal = False,
-        dim_head = 64,
-        heads = 8,
-        ff_mult = 4,
-        bucket_size = 512,
-        ring_attn = False,
-        striped_ring_attn = False,
-        ring_seq_size = 512,
-        auto_shard_seq = None,
+        num_tokens: int,
+        dim: int,
+        depth: int,
+        causal: bool = False,
+        dim_head: int = 64,
+        heads: int = 8,
+        ff_mult: int = 4,
+        bucket_size: int = 512,
+        ring_attn: bool = False,
+        striped_ring_attn: bool = False,
+        ring_seq_size: int = 512,
+        auto_shard_seq: Optional[bool] = None,
         max_ring_passes: Optional[Union[Tuple[int, ...], int]] = None,
-        rotary_embed_theta = 10000,    # will need to be changed for the million token context
-        ignore_index = -1
+        rotary_embed_theta: int = 10000,    # will need to be changed for the million token context
+        ignore_index: int = -1
     ):
         super().__init__()
         self.ring_attn = ring_attn
@@ -466,13 +470,13 @@ class RingTransformer(Module):
             # for workload balancing https://arxiv.org/abs/2311.09431 - MIT paper from Brandon et al.
 
             if self.striped_ring_attn:
-                x = rearrange(x, 'b (i j) -> b (j i)', i = self.bucket_size)
+                x = rearrange('b (i j) -> b (j i)', x, i = self.bucket_size)
 
                 if exists(labels):
-                    labels = rearrange(labels, 'b (i j) -> b (j i)', i = self.bucket_size)
+                    labels = rearrange('b (i j) -> b (j i)', labels, i = self.bucket_size)
 
                 if exists(mask):
-                    mask = rearrange(mask, 'b (i j) -> b (j i)', i = self.bucket_size)
+                    mask = rearrange('b (i j) -> b (j i)', mask, i = self.bucket_size)
 
             # gather across batch and divide across world
 
@@ -499,7 +503,7 @@ class RingTransformer(Module):
         # handle returning of loss
 
         if return_loss:
-            logits = rearrange(logits, 'b n c -> b c n')
+            logits = rearrange('b n c -> b c n', logits)
 
             ce_loss = F.cross_entropy(
                 logits,
@@ -517,6 +521,6 @@ class RingTransformer(Module):
         logits, _ = sharded_seq_to_sharded_batch(logits, batch_sizes)
 
         if self.striped_ring_attn:
-            logits = rearrange(logits, 'b (i j) d -> b (j i) d', j = self.bucket_size)
+            logits = rearrange('b (i j) d -> b (j i) d', logits, j = self.bucket_size)
 
         return logits[:, :seq_len]

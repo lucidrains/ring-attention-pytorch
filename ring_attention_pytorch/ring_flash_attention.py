@@ -6,7 +6,8 @@ import torch
 from torch import nn, einsum, Tensor
 from torch.autograd.function import Function
 
-from einops import rearrange
+import einx
+from einx import rearrange
 
 from ring_attention_pytorch.ring import (
     maybe,
@@ -72,9 +73,6 @@ class RingFlashAttentionFunction(Function):
         if causal:
             mask = None
 
-        if exists(mask):
-            mask = rearrange(mask, 'b j -> b 1 1 j')
-
         per_machine_seq_size = q.shape[-2]
         bucket_size = min(per_machine_seq_size, bucket_size)
         per_machine_buckets = per_machine_seq_size // bucket_size
@@ -123,7 +121,7 @@ class RingFlashAttentionFunction(Function):
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
 
                     if exists(col_mask):
-                        attn_weights = torch.where(col_mask, attn_weights, max_neg_value)
+                        attn_weights = einx.where('b j, b h i j, -> b h i j', col_mask, attn_weights, max_neg_value)
 
                     if causal:
                         if striped_ring_attn:
@@ -146,7 +144,7 @@ class RingFlashAttentionFunction(Function):
                     exp_weights = torch.exp(attn_weights - new_row_maxes)
 
                     if exists(col_mask):
-                        exp_weights = torch.where(col_mask, exp_weights, 0.)
+                        exp_weights = einx.where('b j, b h i j, -> b h i j', col_mask, exp_weights, 0.)
 
                     block_row_sums = exp_weights.sum(dim = -1, keepdims = True).clamp(min = EPSILON)
 
@@ -258,7 +256,7 @@ class RingFlashAttentionFunction(Function):
                     p = torch.exp(attn_weights - lsec)
 
                     if exists(col_mask):
-                        p = torch.where(col_mask, p, 0.)
+                        p = einx.where('b j, b h i j, -> b h i j', col_mask, p, 0.)
 
                     dv_chunk = einsum('... i j, ... i d -> ... j d', p, doc)
                     dp = einsum('... i d, ... j d -> ... i j', doc, vc)
