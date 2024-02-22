@@ -73,6 +73,8 @@ def ring_pass(
 
     if not exists(receive_buffer):
         receive_buffer = torch.zeros_like(x)
+    else:
+        receive_buffer = receive_buffer.contiguous()
 
     send_and_receive_(x, receive_buffer, circular_rank_right(), circular_rank_left())
     return receive_buffer, x
