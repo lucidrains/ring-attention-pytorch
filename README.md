@@ -69,6 +69,7 @@ $ python assert.py
     - [x] forwards
 - [x] fix rotary positions for striped ring attention when flash buckets > 1
 - [x] allow for variable ring passes per layer, for <a href="https://arxiv.org/abs/2007.03356">local -> global attention</a> in ring transformer as one goes up the layers.
+- [x] when doing ring passes, alternate between designated send and receive buffers
 
 - [ ] instead of max ring passes, able to specify lookback in terms of sequence length, and derive number of flash attention bucket + ring passes from that
 - [ ] option to auto-decide ring sequence size based on world size
@@ -76,7 +77,6 @@ $ python assert.py
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
-- [ ] when doing ring passes, alternate between designated send and receive buffers
 - [ ] `batch_isend_irecv` in the presence of key padding mask needing ring exchange, but not a big priority
 
 ## Citations

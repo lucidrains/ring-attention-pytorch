@@ -1,3 +1,4 @@
+from copy import copy
 import math
 from functools import partial
 from typing import Optional
@@ -10,7 +11,6 @@ import einx
 from einx import rearrange
 
 from ring_attention_pytorch.ring import (
-    maybe,
     ring_pass,
     all_ring_pass,
     null_ring_pass,
@@ -95,7 +95,12 @@ class RingFlashAttentionFunction(Function):
 
         kv = torch.stack((k, v))
 
-        for ring_rank, (kv, mask) in ring_pass_fn(kv, mask, max_iters = max_ring_passes):
+        # receive buffers, to be alternated with sent buffer
+
+        receive_kv = None
+        receive_mask = None
+
+        for ring_rank, ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes):
 
             k, v = kv
 
@@ -219,7 +224,12 @@ class RingFlashAttentionFunction(Function):
 
         kv_and_dkv = torch.stack((k, v, dk, dv))
 
-        for ring_rank, (kv_and_dkv, mask) in ring_pass_fn(kv_and_dkv, mask, max_iters = max_ring_passes):
+        # receive buffers, to be alternated with sent buffer
+
+        receive_kv_and_dkv = None
+        receive_mask = None
+
+        for ring_rank, ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes):
 
             k, v, dk, dv = kv_and_dkv
 
