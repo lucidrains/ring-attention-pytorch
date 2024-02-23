@@ -72,6 +72,9 @@ $ python assert.py
 - [x] when doing ring passes, alternate between designated send and receive buffers
 - [x] instead of max ring passes, able to specify lookback in terms of sequence length, and derive number of flash attention bucket + ring passes from that
 
+- [ ] add flash attention kernel version in the presence of cuda
+    - [ ] for backwards, use Tri's flash attention kernels, accumulate dq, dk, dv across rings
+    - [ ] for forwards, use modified Triton flash attention forwards that outputs row sums, maxes, and exponentiated weighted sum
 - [ ] option to auto-decide ring sequence size based on world size
     - [ ] allow for finely specifying how to distribute sharding of batch and sequence, depending on world size
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
