@@ -98,7 +98,7 @@ class RingFlashAttentionFunction(Function):
 
         orig_k, orig_v, orig_mask, device = k, v, mask, q.device
 
-        row_ring_rank = get_rank() if ring_reduce_col else 0
+        row_ring_rank = (get_rank() % ring_size) if ring_reduce_col else 0
 
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
 
@@ -130,7 +130,8 @@ class RingFlashAttentionFunction(Function):
             )
 
             for k_ind, (kc, vc, col_mask) in enumerate(col_splits):
-                col_bucket_index = ring_rank * per_machine_buckets + k_ind
+                col_ring_rank = ring_rank % ring_size
+                col_bucket_index = col_ring_rank * per_machine_buckets + k_ind
 
                 row_splits = zip(
                     q.split(bucket_size, dim = -2),
@@ -228,7 +229,7 @@ class RingFlashAttentionFunction(Function):
 
         q, k, v, o, lse = ctx.saved_tensors
 
-        row_ring_rank = get_rank() if ring_reduce_col else 0
+        row_ring_rank = (get_rank() % ring_size) if ring_reduce_col else 0
 
         per_machine_seq_size = k.shape[-2]
         per_machine_buckets = per_machine_seq_size // bucket_size
@@ -271,7 +272,8 @@ class RingFlashAttentionFunction(Function):
             )
 
             for k_ind, (kc, vc, dkc, dvc, col_mask) in enumerate(col_splits):
-                col_bucket_index = ring_rank * per_machine_buckets + k_ind
+                col_ring_rank = ring_rank % ring_size
+                col_bucket_index = col_ring_rank * per_machine_buckets + k_ind
 
                 for ind, (qc, oc, doc, lsec, dqc) in enumerate(row_splits):
                     row_bucket_index = row_ring_rank * per_machine_buckets + ind

@@ -71,16 +71,16 @@ $ python assert.py
 - [x] allow for variable ring passes per layer, for <a href="https://arxiv.org/abs/2007.03356">local -> global attention</a> in ring transformer as one goes up the layers.
 - [x] when doing ring passes, alternate between designated send and receive buffers
 - [x] instead of max ring passes, able to specify lookback in terms of sequence length, and derive number of flash attention bucket + ring passes from that
+- [x] ability to have ring size < world size, sharding the batch and sequence, and doing ring reduce with the correct set of ranks
 
 - [ ] add flash attention kernel version in the presence of cuda
     - [ ] for backwards, use Tri's flash attention kernels, accumulate dq, dk, dv across rings
     - [ ] for forwards, use modified Triton flash attention forwards that outputs row sums, maxes, and exponentiated weighted sum
-- [ ] option to auto-decide ring sequence size based on world size
-    - [ ] allow for finely specifying how to distribute sharding of batch and sequence, depending on world size
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 - [ ] `batch_isend_irecv` in the presence of key padding mask needing ring exchange, but not a big priority
+- [ ] figure out how to pytest distributed pytorch
 
 ## Citations
 
