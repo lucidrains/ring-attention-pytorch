@@ -62,7 +62,10 @@ class RingFlashAttentionFunction(Function):
         max_ring_passes: Optional[int],
         striped_ring_attn: bool,
     ):
-        assert q.shape[-2] == k.shape[-2]
+        cross_attn = q.shape[-2] != k.shape[-2]
+        ring_reduce_col &= not cross_attn
+        striped_ring_attn &= not cross_attn
+
         assert k.shape[-1] == v.shape[-1]
 
         """ Algorithm 1 in the flash attention v2 paper + ring passing """
@@ -120,6 +123,9 @@ class RingFlashAttentionFunction(Function):
                 )
 
                 for ind, (qc, oc, row_sums, row_maxes) in enumerate(row_splits):
+
+                    qk_len_diff = kc.shape[-2] - qc.shape[-2]
+
                     row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
@@ -132,12 +138,12 @@ class RingFlashAttentionFunction(Function):
                             # `GetMaskStripedAttention` pseudocode at end of section 2.2.1 of https://arxiv.org/abs/2311.09431
 
                             triu_offset = int(row_bucket_index >= col_bucket_index)
-                            causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(triu_offset)
+                            causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(triu_offset + qk_len_diff)
                             attn_weights.masked_fill_(causal_mask, max_neg_value)
 
                         else:
                             if row_bucket_index == col_bucket_index:
-                                causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(1)
+                                causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(1 + qk_len_diff)
                                 attn_weights.masked_fill_(causal_mask, max_neg_value)
                             elif row_bucket_index < col_bucket_index:
                                 attn_weights.fill_(max_neg_value)
@@ -246,6 +252,8 @@ class RingFlashAttentionFunction(Function):
                 for ind, (qc, oc, doc, lsec, dqc) in enumerate(row_splits):
                     row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
+                    qk_len_diff = kc.shape[-2] - qc.shape[-2]
+
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
 
                     if causal:
@@ -253,11 +261,11 @@ class RingFlashAttentionFunction(Function):
                             # `GetMaskStripedAttention` pseudocode at end of section 2.2.1 of https://arxiv.org/abs/2311.09431
 
                             triu_offset = int(row_bucket_index >= col_bucket_index)
-                            causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(triu_offset)
+                            causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(triu_offset + qk_len_diff)
                             attn_weights.masked_fill_(causal_mask, max_neg_value)
                         else:
                             if row_bucket_index == col_bucket_index:
-                                causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(1)
+                                causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(1 + qk_len_diff)
                                 attn_weights.masked_fill_(causal_mask, max_neg_value)
                             elif row_bucket_index < col_bucket_index:
                                 attn_weights.fill_(max_neg_value)

@@ -290,7 +290,8 @@ class RingAttention(Module):
         self,
         x,
         mask = None,
-        rotary_emb = None
+        rotary_emb = None,
+        force_ring_reduce_off = False
     ):
         """
         einstein notation
@@ -341,9 +342,9 @@ class RingAttention(Module):
                 mask,
                 self.causal,
                 self.bucket_size,
-                ring_attn,
+                ring_attn and not force_ring_reduce_off,
                 self.max_ring_passes,
-                self.striped_ring_attn
+                self.striped_ring_attn and not force_ring_reduce_off
             )
 
         # combine heads
@@ -460,11 +461,12 @@ class RingTransformer(Module):
         x,
         mask = None,
         labels = None,
-        return_loss = False
+        return_loss = False,
+        force_ring_reduce_off = False
     ):
         seq_len, device = x.shape[-1], x.device
 
-        auto_shard_seq = self.auto_shard_seq & is_distributed()
+        auto_shard_seq = not force_ring_reduce_off and self.auto_shard_seq and is_distributed()
 
         # get labels if not passed in
 
@@ -515,7 +517,13 @@ class RingTransformer(Module):
         x = self.token_emb(x)
 
         for attn, ff in self.layers:
-            x = attn(x, mask = mask, rotary_emb = rotary_emb) + x
+            x = attn(
+                x,
+                mask = mask,
+                rotary_emb = rotary_emb,
+                force_ring_reduce_off = force_ring_reduce_off
+            ) + x
+
             x = ff(x) + x
 
         logits = self.to_logits(x)
