@@ -31,6 +31,9 @@ def start(
 ):
     setup(rank, world_size)
 
+    ring_seq_size = ceil(seq_len / world_size)
+    bucket_size = ring_seq_size // 2
+
     ring_attention_net = RingTransformer(
         num_tokens = 256,
         dim = dim,
@@ -39,8 +42,8 @@ def start(
         dim_head = 8,
         ring_attn = True,
         striped_ring_attn = striped_ring_attn,
-        ring_seq_size = ceil(seq_len / world_size),
-        bucket_size = ceil(seq_len / world_size / 2),
+        ring_seq_size = ring_seq_size,
+        bucket_size = bucket_size
     )
 
     flash_attention_net = RingTransformer(
@@ -49,7 +52,8 @@ def start(
         causal = causal,
         depth = 2,
         dim_head = 8,
-        ring_attn = False
+        ring_attn = False,
+        bucket_size = bucket_size
     )
 
     flash_attention_net.load_state_dict(ring_attention_net.state_dict())
@@ -114,7 +118,7 @@ if __name__ == '__main__':
     batch_size_var_len = False
     use_cuda = False
     causal = True
-    striped_ring_attn = True
+    striped_ring_attn = False
 
     assert not use_cuda or torch.cuda.device_count() <= world_size
 

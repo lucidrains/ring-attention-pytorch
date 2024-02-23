@@ -70,8 +70,8 @@ $ python assert.py
 - [x] fix rotary positions for striped ring attention when flash buckets > 1
 - [x] allow for variable ring passes per layer, for <a href="https://arxiv.org/abs/2007.03356">local -> global attention</a> in ring transformer as one goes up the layers.
 - [x] when doing ring passes, alternate between designated send and receive buffers
+- [x] instead of max ring passes, able to specify lookback in terms of sequence length, and derive number of flash attention bucket + ring passes from that
 
-- [ ] instead of max ring passes, able to specify lookback in terms of sequence length, and derive number of flash attention bucket + ring passes from that
 - [ ] option to auto-decide ring sequence size based on world size
     - [ ] allow for finely specifying how to distribute sharding of batch and sequence, depending on world size
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first

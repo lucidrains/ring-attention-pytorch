@@ -30,6 +30,9 @@ def exists(val):
 def default(val, d):
     return val if exists(val) else d
 
+def divisible_by(num, den):
+    return (num % den) == 0
+
 def none_iterator():
     while True:
         yield None
@@ -68,18 +71,25 @@ class RingFlashAttentionFunction(Function):
 
         assert k.shape[-1] == v.shape[-1]
 
+        per_machine_seq_size = k.shape[-2]
+
         # calculate max ring passes
 
         max_ring_passes = None
+        num_lookback_buckets = float('inf')
+
         if exists(max_lookback_seq_len):
-            max_ring_passes = math.ceil(max_lookback_seq_len / k.shape[-2])
+            assert causal
+            assert not (ring_reduce_col and not divisible_by(per_machine_seq_size, bucket_size))
+
+            max_ring_passes = math.ceil(max_lookback_seq_len / per_machine_seq_size)
+            num_lookback_buckets = max_lookback_seq_len // bucket_size
 
         # ignore key padding mask if autoregressive
 
         if causal:
             mask = None
 
-        per_machine_seq_size = k.shape[-2]
         bucket_size = min(per_machine_seq_size, bucket_size)
         per_machine_buckets = per_machine_seq_size // bucket_size
 
@@ -138,6 +148,9 @@ class RingFlashAttentionFunction(Function):
                         attn_weights = einx.where('b j, b h i j, -> b h i j', col_mask, attn_weights, max_neg_value)
 
                     if causal:
+                        if (row_bucket_index - col_bucket_index) > num_lookback_buckets:
+                            continue
+
                         if striped_ring_attn:
                             # `GetMaskStripedAttention` pseudocode at end of section 2.2.1 of https://arxiv.org/abs/2311.09431
 
@@ -184,6 +197,7 @@ class RingFlashAttentionFunction(Function):
             bucket_size,
             ring_reduce_col,
             max_ring_passes,
+            num_lookback_buckets,
             striped_ring_attn
         )
 
@@ -203,6 +217,7 @@ class RingFlashAttentionFunction(Function):
             bucket_size,
             ring_reduce_col,
             max_ring_passes,
+            num_lookback_buckets,
             striped_ring_attn
         ) = ctx.args
 
@@ -261,6 +276,9 @@ class RingFlashAttentionFunction(Function):
                     attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
 
                     if causal:
+                        if (row_bucket_index - col_bucket_index) > num_lookback_buckets:
+                            continue
+
                         if striped_ring_attn:
                             # `GetMaskStripedAttention` pseudocode at end of section 2.2.1 of https://arxiv.org/abs/2311.09431
 
@@ -292,12 +310,14 @@ class RingFlashAttentionFunction(Function):
                     dkc.add_(dk_chunk)
                     dvc.add_(dv_chunk)
 
-            dkv = kv_and_dkv[2:]
+            if ring_reduce_col:
 
-            max_ring_passes = default(max_ring_passes, get_world_size())
-            dkv = ring_pass(get_world_size() - max_ring_passes + 1, dkv)
+                dkv = kv_and_dkv[2:]
 
-            dk, dv = dkv
+                max_ring_passes = default(max_ring_passes, get_world_size())
+                dkv = ring_pass(get_world_size() - max_ring_passes + 1, dkv)
+
+                dk, dv = dkv
 
         return dq, dk, dv, None, None, None, None, None, None, None
 

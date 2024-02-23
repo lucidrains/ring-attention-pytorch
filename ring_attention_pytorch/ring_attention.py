@@ -334,7 +334,7 @@ class RingAttention(Module):
 
         # regular attention vs flash w/ or w/o kv ring reduce
 
-        if self.force_regular_attn or not is_distributed():
+        if self.force_regular_attn:
             out = default_attention(q, k, v, mask = mask, causal = self.causal)
         else:
             out = ring_flash_attn(
