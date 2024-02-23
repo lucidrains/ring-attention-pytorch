@@ -240,6 +240,8 @@ class RingAttention(Module):
         auto_shard_seq: Optional[bool] = None,
         prenorm: bool = True,
         force_regular_attn: bool = False,
+        rotary_embed: bool = False,
+        rotary_embed_theta: int = 10000,
     ):
         super().__init__()
         self.eps = eps
@@ -261,7 +263,22 @@ class RingAttention(Module):
         self.ring_seq_size = ring_seq_size
         self.bucket_size = bucket_size
 
+        # rotary
+
+        self.rotary_embed = None
+        if rotary_embed:
+            self.rotary_embed = RingRotaryEmbedding(
+                dim = dim_head,
+                ring = ring_attn,
+                striped = striped_ring_attn,
+                theta = rotary_embed_theta,
+                buckets = ring_seq_size // bucket_size
+            )
+
+        # projections
+
         dim_inner = dim_head * heads
+
         self.to_qkv = nn.Sequential(
             RMSNorm(dim) if prenorm else nn.Identity(),
             nn.Linear(dim, dim_inner * 3, bias = False)
@@ -306,6 +323,9 @@ class RingAttention(Module):
         q, k, v = rearrange('b n (qkv h d) -> qkv b h n d', qkv, qkv = 3, h = self.heads)
 
         # rotary relative positions
+
+        if not exists(rotary_emb) and exists(self.rotary_embed):
+            rotary_emb = self.rotary_embed(q.shape[-2])
 
         if exists(rotary_emb):
             q = apply_rotary_pos_emb(rotary_emb, q)
