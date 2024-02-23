@@ -71,8 +71,10 @@ def send_and_receive_(x, receive_buffer, send_to_rank, receive_from_rank):
 def ring_pass(
     num_ring_passes: int,
     x: Tensor,
-    receive_buffer: Optional[Tensor] = None
+    receive_buffer: Optional[Tensor] = None,
+    ring_size: Optional[int] = None
 ):
+    ring_size = default(ring_size, get_world_size())
     x = x.contiguous()
 
     if not exists(receive_buffer):
@@ -80,25 +82,25 @@ def ring_pass(
     else:
         receive_buffer = receive_buffer.contiguous()
 
-    send_and_receive_(x, receive_buffer, circular_rank_right(), circular_rank_left())
+    send_and_receive_(x, receive_buffer, circular_rank_right(ring_size = ring_size), circular_rank_left(ring_size = ring_size))
     return receive_buffer, x
 
 one_ring_pass = partial(ring_pass, 1)
 
 # iterator for all ring passes of all tensors
 
-def null_ring_pass(*tensors, max_iters = None, receive_buffers = None):
+def null_ring_pass(*tensors, max_iters = None, receive_buffers = None, ring_size = None):
     yield 0, (tensors, receive_buffers)
 
-def all_ring_pass(*tensors, max_iters = None, receive_buffers = None):
-    world_size = get_world_size()
-    max_iters = default(max_iters, world_size)
+def all_ring_pass(*tensors, max_iters = None, receive_buffers = None, ring_size = None):
+    ring_size = default(ring_size, get_world_size())
+    max_iters = default(max_iters, ring_size)
 
     receive_buffers = cast_tuple(receive_buffers, len(tensors))
 
     # make sure iteration is between 1 and world size
 
-    total_iters = max(1, min(world_size, max_iters))
+    total_iters = max(1, min(ring_size, max_iters))
 
     curr_ring_pos = get_rank()
 
@@ -107,7 +109,7 @@ def all_ring_pass(*tensors, max_iters = None, receive_buffers = None):
 
         yield curr_ring_pos, (tensors, receive_buffers)
 
-        curr_ring_pos = circular_index_left(curr_ring_pos, world_size)
+        curr_ring_pos = circular_index_left(curr_ring_pos, ring_size)
 
         if is_last:
             continue
@@ -117,7 +119,7 @@ def all_ring_pass(*tensors, max_iters = None, receive_buffers = None):
 
         for tensor, receive_buffer in zip(tensors, receive_buffers):
             if exists(tensor):
-                new_tensor, new_receive_buffer = one_ring_pass(tensor, receive_buffer)
+                new_tensor, new_receive_buffer = one_ring_pass(tensor, receive_buffer, ring_size)
             else:
                 new_tensor, new_receive_buffer = None, None
 

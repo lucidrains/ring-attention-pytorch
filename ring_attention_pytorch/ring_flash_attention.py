@@ -64,7 +64,10 @@ class RingFlashAttentionFunction(Function):
         ring_reduce_col: bool,
         striped_ring_attn: bool,
         max_lookback_seq_len: Optional[int],
+        ring_size: Optional[int]
     ):
+        ring_size = default(ring_size, get_world_size())
+
         cross_attn = q.shape[-2] != k.shape[-2]
         ring_reduce_col &= not cross_attn
         striped_ring_attn &= not cross_attn
@@ -116,7 +119,7 @@ class RingFlashAttentionFunction(Function):
         receive_kv = None
         receive_mask = None
 
-        for ring_rank, ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes):
+        for ring_rank, ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             k, v = kv
 
@@ -198,7 +201,8 @@ class RingFlashAttentionFunction(Function):
             ring_reduce_col,
             max_ring_passes,
             num_lookback_buckets,
-            striped_ring_attn
+            striped_ring_attn,
+            ring_size
         )
 
         ctx.save_for_backward(q, orig_k, orig_v, o, lse)
@@ -218,7 +222,8 @@ class RingFlashAttentionFunction(Function):
             ring_reduce_col,
             max_ring_passes,
             num_lookback_buckets,
-            striped_ring_attn
+            striped_ring_attn,
+            ring_size
         ) = ctx.args
 
         q, k, v, o, lse = ctx.saved_tensors
@@ -253,7 +258,7 @@ class RingFlashAttentionFunction(Function):
         receive_kv_and_dkv = None
         receive_mask = None
 
-        for ring_rank, ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes):
+        for ring_rank, ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             k, v, dk, dv = kv_and_dkv
 
@@ -314,8 +319,8 @@ class RingFlashAttentionFunction(Function):
 
                 dkv = kv_and_dkv[2:]
 
-                max_ring_passes = default(max_ring_passes, get_world_size())
-                dkv = ring_pass(get_world_size() - max_ring_passes + 1, dkv)
+                max_ring_passes = default(max_ring_passes, ring_size)
+                dkv = ring_pass(ring_size - max_ring_passes + 1, dkv)
 
                 dk, dv = dkv
 

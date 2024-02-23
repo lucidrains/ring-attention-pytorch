@@ -24,6 +24,7 @@ def start(
     batch_size,
     batch_size_var_len,
     seq_len,
+    num_sharded_batches,
     causal,
     striped_ring_attn,
     dim,
@@ -31,7 +32,7 @@ def start(
 ):
     setup(rank, world_size)
 
-    ring_seq_size = ceil(seq_len / world_size)
+    ring_seq_size = ceil(seq_len / world_size) * num_sharded_batches
     bucket_size = ring_seq_size // 2
 
     ring_attention_net = RingTransformer(
@@ -115,10 +116,11 @@ def start(
 if __name__ == '__main__':
     world_size = 8
     batch_size = 2
+    num_sharded_batches = 1
     batch_size_var_len = False
     use_cuda = False
     causal = True
-    striped_ring_attn = False
+    striped_ring_attn = True
 
     assert not use_cuda or torch.cuda.device_count() <= world_size
 
@@ -132,6 +134,7 @@ if __name__ == '__main__':
             batch_size,
             batch_size_var_len,
             seq_len,
+            num_sharded_batches,
             causal,
             striped_ring_attn,
             dim,

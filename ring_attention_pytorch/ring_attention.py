@@ -192,27 +192,41 @@ def sharded_batch_to_sharded_seq(
     if exists(mask):
         mask, _ = all_gather(mask)
 
+    # first make sure world size is divisible by the sequence size
+
+    world_size = get_world_size()
+
+    total_split_seq = x.shape[-1] // seq_size
+
+    assert divisible_by(world_size, total_split_seq)
+
+    num_sharded_batches = world_size // total_split_seq
+
+    x = rearrange('(b s) n -> b (s n)', x, s = num_sharded_batches)
+
     # then split sequence across machines
 
     x = x.split(seq_size, dim = -1)
 
-    assert len(x) == get_world_size()
-
     x, _ = split_by_rank(x)
 
     if exists(mask):
+        mask = rearrange('(b s) n -> b (s n)', mask, s = num_sharded_batches)
         mask = mask.split(seq_size, dim = -1)
         mask, _ = split_by_rank(mask)
 
-    return (x, mask), sizes
+    return (x, mask), sizes, num_sharded_batches
 
 def sharded_seq_to_sharded_batch(
     logits: Tensor,
-    sizes
+    sizes,
+    num_sharded_batches = 1
 ):
     all_gather = AllGather(dim = -2) # all gather across sequence
 
     logits, _ = all_gather(logits)
+
+    logits = rearrange('b (s n) c -> (b s) n c', logits, s = num_sharded_batches)
 
     logits = logits.split(sizes.tolist(), dim = 0)
 
@@ -291,7 +305,8 @@ class RingAttention(Module):
         x,
         mask = None,
         rotary_emb = None,
-        force_ring_reduce_off = False
+        force_ring_reduce_off = False,
+        ring_size = None,
     ):
         """
         einstein notation
@@ -302,6 +317,7 @@ class RingAttention(Module):
         n, i, j - sequence
         """
 
+        ring_size = default(ring_size, get_world_size())
         ring_attn = self.ring_attn & is_distributed()
         auto_shard_seq = self.auto_shard_seq & is_distributed()
 
@@ -345,6 +361,7 @@ class RingAttention(Module):
                 ring_attn and not force_ring_reduce_off,
                 self.striped_ring_attn and not force_ring_reduce_off,
                 self.max_lookback_seq_len,
+                ring_size
             )
 
         # combine heads
@@ -461,7 +478,8 @@ class RingTransformer(Module):
         mask = None,
         labels = None,
         return_loss = False,
-        force_ring_reduce_off = False
+        force_ring_reduce_off = False,
+        ring_size = None
     ):
         seq_len, device = x.shape[-1], x.device
 
@@ -475,6 +493,8 @@ class RingTransformer(Module):
             x, labels = x[:, :-1], x[:, 1:]
 
         # take care of padding to divide sequence across the machines
+
+        ring_size = default(ring_size, get_world_size())
 
         if auto_shard_seq:
             # first pad to right multiple
@@ -501,10 +521,14 @@ class RingTransformer(Module):
 
             # gather across batch and divide across world
 
-            (x, mask), batch_sizes = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
+            (x, mask), batch_sizes, num_sharded_batches = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
 
             if exists(labels):
-                (labels, _), _ = sharded_batch_to_sharded_seq(labels, None, self.ring_seq_size)
+                (labels, _), *_ = sharded_batch_to_sharded_seq(labels, None, self.ring_seq_size)
+
+            # calculate ring size from num sharded batches
+
+            ring_size = get_world_size() // num_sharded_batches
 
         # rotary positions
         # taking into account ring and striping
@@ -520,7 +544,8 @@ class RingTransformer(Module):
                 x,
                 mask = mask,
                 rotary_emb = rotary_emb,
-                force_ring_reduce_off = force_ring_reduce_off
+                force_ring_reduce_off = force_ring_reduce_off,
+                ring_size = ring_size
             ) + x
 
             x = ff(x) + x
@@ -545,7 +570,7 @@ class RingTransformer(Module):
         if not auto_shard_seq:
             return logits
 
-        logits, _ = sharded_seq_to_sharded_batch(logits, batch_sizes)
+        logits, _ = sharded_seq_to_sharded_batch(logits, batch_sizes, num_sharded_batches)
 
         if self.striped_ring_attn:
             logits = rearrange('b (i j) d -> b (j i) d', logits, j = self.bucket_size)
