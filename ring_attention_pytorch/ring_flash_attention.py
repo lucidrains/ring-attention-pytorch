@@ -59,8 +59,8 @@ class RingFlashAttentionFunction(Function):
         causal: bool,
         bucket_size: int,
         ring_reduce_col: bool,
-        max_ring_passes: Optional[int],
         striped_ring_attn: bool,
+        max_lookback_seq_len: Optional[int],
     ):
         cross_attn = q.shape[-2] != k.shape[-2]
         ring_reduce_col &= not cross_attn
@@ -68,14 +68,16 @@ class RingFlashAttentionFunction(Function):
 
         assert k.shape[-1] == v.shape[-1]
 
-        """ Algorithm 1 in the flash attention v2 paper + ring passing """
+        # calculate max ring passes
+
+        max_ring_passes = math.ceil(max_lookback_seq_len / k.shape[-2])
 
         # ignore key padding mask if autoregressive
 
         if causal:
             mask = None
 
-        per_machine_seq_size = q.shape[-2]
+        per_machine_seq_size = k.shape[-2]
         bucket_size = min(per_machine_seq_size, bucket_size)
         per_machine_buckets = per_machine_seq_size // bucket_size
 
@@ -206,7 +208,7 @@ class RingFlashAttentionFunction(Function):
 
         row_ring_rank = get_rank() if ring_reduce_col else 0
 
-        per_machine_seq_size = q.shape[-2]
+        per_machine_seq_size = k.shape[-2]
         per_machine_buckets = per_machine_seq_size // bucket_size
 
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass

@@ -235,7 +235,7 @@ class RingAttention(Module):
         bucket_size: int = 512,
         ring_attn: bool = False,
         ring_seq_size: int = 512,
-        max_ring_passes: Optional[int] = None,
+        max_lookback_seq_len: Optional[int] = None,
         striped_ring_attn: bool = False,
         auto_shard_seq: Optional[bool] = None,
         prenorm: bool = True,
@@ -252,7 +252,7 @@ class RingAttention(Module):
         assert divisible_by(ring_seq_size, bucket_size)
 
         self.ring_attn = ring_attn
-        self.max_ring_passes = max_ring_passes
+        self.max_lookback_seq_len = max_lookback_seq_len
         self.striped_ring_attn = striped_ring_attn
 
         self.force_regular_attn = force_regular_attn
@@ -343,8 +343,8 @@ class RingAttention(Module):
                 self.causal,
                 self.bucket_size,
                 ring_attn and not force_ring_reduce_off,
-                self.max_ring_passes,
-                self.striped_ring_attn and not force_ring_reduce_off
+                self.striped_ring_attn and not force_ring_reduce_off,
+                self.max_lookback_seq_len,
             )
 
         # combine heads
@@ -395,7 +395,7 @@ class RingTransformer(Module):
         striped_ring_attn: bool = False,
         ring_seq_size: int = 512,
         auto_shard_seq: Optional[bool] = None,
-        max_ring_passes: Optional[Union[Tuple[int, ...], int]] = None,
+        max_lookback_seq_len: Optional[Union[Tuple[int, ...], int]] = None,
         rotary_embed_theta: int = 10000,    # will need to be changed for the million token context
         ignore_index: int = -1
     ):
@@ -425,11 +425,11 @@ class RingTransformer(Module):
 
         self.layers = ModuleList([])
 
-        max_ring_passes = default(max_ring_passes, get_world_size())
-        max_ring_passes = cast_tuple(max_ring_passes, depth)
-        assert len(max_ring_passes) == depth
+        max_lookback_seq_len = default(max_lookback_seq_len, get_world_size())
+        max_lookback_seq_len = cast_tuple(max_lookback_seq_len, depth)
+        assert len(max_lookback_seq_len) == depth
 
-        for layer_max_ring_passes in max_ring_passes:
+        for layer_max_lookback_seq_len in max_lookback_seq_len:
 
             self.layers.append(ModuleList([
                 RingAttention(
@@ -440,7 +440,7 @@ class RingTransformer(Module):
                     bucket_size = bucket_size,
                     ring_attn = ring_attn,
                     ring_seq_size = ring_seq_size,
-                    max_ring_passes = layer_max_ring_passes,
+                    max_lookback_seq_len = layer_max_lookback_seq_len,
                     striped_ring_attn = striped_ring_attn,
                     auto_shard_seq = False,
                 ),
