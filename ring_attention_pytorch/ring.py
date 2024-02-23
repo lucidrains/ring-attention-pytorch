@@ -48,12 +48,16 @@ def circular_index_right(pos, ring_size, num = 1):
 def circular_rank_left(rank = None, ring_size = None, num = 1):
     rank = default(rank, get_rank())
     ring_size = default(ring_size, get_world_size())
-    return circular_index_left(rank, ring_size, num)
+    ring_set_num = rank // ring_size
+    offset = ring_set_num * ring_size
+    return circular_index_left(rank, ring_size, num) + offset
 
 def circular_rank_right(rank = None, ring_size = None, num = 1):
     rank = default(rank, get_rank())
     ring_size = default(ring_size, get_world_size())
-    return circular_index_right(rank, ring_size, num)
+    ring_set_num = rank // ring_size
+    offset = ring_set_num * ring_size
+    return circular_index_right(rank, ring_size, num) + offset
 
 # one ring pass
 
