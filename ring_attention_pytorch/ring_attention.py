@@ -425,7 +425,6 @@ class RingTransformer(Module):
 
         self.layers = ModuleList([])
 
-        max_lookback_seq_len = default(max_lookback_seq_len, get_world_size())
         max_lookback_seq_len = cast_tuple(max_lookback_seq_len, depth)
         assert len(max_lookback_seq_len) == depth
 

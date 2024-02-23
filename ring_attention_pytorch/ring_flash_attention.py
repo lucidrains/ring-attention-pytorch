@@ -70,7 +70,9 @@ class RingFlashAttentionFunction(Function):
 
         # calculate max ring passes
 
-        max_ring_passes = math.ceil(max_lookback_seq_len / k.shape[-2])
+        max_ring_passes = None
+        if exists(max_lookback_seq_len):
+            max_ring_passes = math.ceil(max_lookback_seq_len / k.shape[-2])
 
         # ignore key padding mask if autoregressive
 
