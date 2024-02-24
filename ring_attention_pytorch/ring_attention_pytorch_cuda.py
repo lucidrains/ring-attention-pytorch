@@ -294,13 +294,27 @@ class RingFlashAttentionCUDAFunction(Function):
 
             k, v = kv
 
+            # notation that researchers use is
+            # o - output
+            # m - row maxes
+            # l - row sums
+            # m and l is summarized into a single logsumexp (lse) at the end for backward
+
+            ring_o = torch.empty_like(o)
+            ring_m = torch.empty_like(all_row_maxes)
+            ring_l = torch.empty_like(all_row_sums)
+
             _attn_fwd(
                 q, k, v
                 scale,
-                all_row_maxes,
-                all_row_sums,
-                o,
+                ring_l,
+                ring_m,
+                ring_o,
             )
+
+            o.add_(ring_o)
+            all_row_sums.add_(all_row_sums)
+            all_row_maxes = torch.maximum(all_row_maxes, ring_m)
 
         o.div_(all_row_sums)
 
