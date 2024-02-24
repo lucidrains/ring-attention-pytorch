@@ -166,13 +166,13 @@ def _attn_fwd(
     offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
 
-    acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
 
     qk_scale = sm_scale
     qk_scale *= 1.44269504
 
     q = tl.load(Q_block_ptr)
-    o = tl.load(O_block_ptr)
+
+    acc = tl.load(O_block_ptr)
     m_i = tl.load(M_block_ptr)
     l_i = tl.load(L_block_ptr)
 
