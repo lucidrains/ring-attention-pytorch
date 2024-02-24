@@ -108,6 +108,7 @@ def _attn_fwd(
     K,
     V,
     sm_scale,
+    O,
     M,
     L,
     Out,
@@ -165,14 +166,15 @@ def _attn_fwd(
     offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
 
-    m_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
-    l_i = tl.zeros([BLOCK_M], dtype=tl.float32) + 1.0
     acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
 
     qk_scale = sm_scale
     qk_scale *= 1.44269504
 
     q = tl.load(Q_block_ptr)
+    o = tl.load(O_block_ptr)
+    m_i = tl.load(M_block_ptr)
+    l_i = tl.load(L_block_ptr)
 
     if STAGE & 1:
         acc, l_i, m_i = _attn_fwd_inner(acc, l_i, m_i, q, K_block_ptr, V_block_ptr,  #
@@ -193,9 +195,11 @@ def _attn_fwd(
     m_ptrs = M + off_hz * N_CTX + offs_m
     l_ptrs = L + off_hz * N_CTX + offs_l
 
+    o += acc.to(Out.type.element_ty)
+
     tl.store(m_ptrs, m_i)
     tl.store(l_ptrs, l_i)
-    tl.store(O_block_ptr, acc.to(Out.type.element_ty))
+    tl.store(O_block_ptr, o)
 
 # helper functions
 
@@ -296,21 +300,13 @@ class RingFlashAttentionCUDAFunction(Function):
             # l - row sums
             # m and l is summarized into a single logsumexp (lse) at the end for backward
 
-            ring_o = torch.empty_like(o)
-            ring_m = torch.empty_like(all_row_maxes)
-            ring_l = torch.empty_like(all_row_sums)
-
             _attn_fwd(
                 q, k, v
                 scale,
-                ring_l,
-                ring_m,
-                ring_o,
+                o,
+                all_row_sums,
+                all_row_maxes
             )
-
-            o.add_(ring_o)
-            all_row_sums.add_(all_row_sums)
-            all_row_maxes = torch.maximum(all_row_maxes, ring_m)
 
         o.div_(all_row_sums)
 
