@@ -60,6 +60,8 @@ class RingFlashAttentionCUDAFunction(Function):
         max_lookback_seq_len: Optional[int],
         ring_size: Optional[int]
     ):
+        assert not striped_ring_attn, 'striped ring attention will need to wait for a PR upstream to flash-attn that changes the causal masking for workload balancing'
+
         ring_size = default(ring_size, get_world_size())
 
         cross_attn = q.shape[-2] != k.shape[-2]
