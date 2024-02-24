@@ -1,13 +1,9 @@
 import math
-from functools import partial
 from typing import Optional
 
 import torch
 from torch import nn, einsum, Tensor
 from torch.autograd.function import Function
-
-import einx
-from einx import rearrange
 
 from ring_attention_pytorch.ring import (
     ring_pass,
