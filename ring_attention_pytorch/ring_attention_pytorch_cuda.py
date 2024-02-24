@@ -26,6 +26,10 @@ if not exists(importlib.util.find_spec('flash-attn')):
     print('flash-attn must be installed. `pip install flash-attn --no-build-isolation` first')
     exit()
 
+from flash_attn.flash_attn_interface import (
+    _flash_attn_varlen_backward
+)
+
 # helper functions
 
 def exists(val):
@@ -240,14 +244,6 @@ class RingFlashAttentionCUDAFunction(Function):
         dk = torch.zeros_like(k)
         dv = torch.zeros_like(v)
 
-        row_splits = zip(
-            q.split(bucket_size, dim = -2),
-            o.split(bucket_size, dim = -2),
-            do.split(bucket_size, dim = -2),
-            lse.split(bucket_size, dim = -2),
-            dq.split(bucket_size, dim = -2)
-        )
-
         kv_and_dkv = torch.stack((k, v, dk, dv))
 
         # receive buffers, to be alternated with sent buffer
@@ -259,68 +255,41 @@ class RingFlashAttentionCUDAFunction(Function):
 
             k, v, dk, dv = kv_and_dkv
 
-            col_splits = zip(
-                k.split(bucket_size, dim = -2),
-                v.split(bucket_size, dim = -2),
-                dk.split(bucket_size, dim = -2),
-                dv.split(bucket_size, dim = -2),
-                maybe_split(mask, bucket_size, dim = -1)
+            ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
+                dout = do,
+                q = q,
+                k = k,
+                v = v,
+                out = o,
+                softmax_lse = lse,
+                dq = torch.zeros_like(dq),
+                dk = torch.zeros_like(dk),
+                dv = torch.zeros_like(dv),
+                cu_seqlens_q = q.shape[-2],
+                cu_seqlens_k = k.shape[-2],
+                max_seqlen_q = None,
+                max_seqlen_k = None,
+                dropout_p = 0.,
+                softmax_scale = scale,
+                causal = causal,
+                window_size = bucket_size,
+                alibi_slopes = None,
+                deterministic = False
             )
 
-            for k_ind, (kc, vc, dkc, dvc, col_mask) in enumerate(col_splits):
-                col_ring_rank = ring_rank % ring_size
-                col_bucket_index = col_ring_rank * per_machine_buckets + k_ind
+            dq.add_(ring_dq)
+            dk.add_(ring_dk)
+            dv.add_(ring_dv)
 
-                for ind, (qc, oc, doc, lsec, dqc) in enumerate(row_splits):
-                    row_bucket_index = row_ring_rank * per_machine_buckets + ind
+            if not ring_reduce_col:
+                continue
 
-                    qk_len_diff = kc.shape[-2] - qc.shape[-2]
+            dkv = kv_and_dkv[2:]
 
-                    attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
+            max_ring_passes = default(max_ring_passes, ring_size)
+            dkv = ring_pass(ring_size - max_ring_passes + 1, dkv)
 
-                    if causal:
-                        if (row_bucket_index - col_bucket_index) > num_lookback_buckets:
-                            continue
-
-                        if striped_ring_attn:
-                            # `GetMaskStripedAttention` pseudocode at end of section 2.2.1 of https://arxiv.org/abs/2311.09431
-
-                            triu_offset = int(row_bucket_index >= col_bucket_index)
-                            causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(triu_offset + qk_len_diff)
-                            attn_weights.masked_fill_(causal_mask, max_neg_value)
-                        else:
-                            if row_bucket_index == col_bucket_index:
-                                causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(1 + qk_len_diff)
-                                attn_weights.masked_fill_(causal_mask, max_neg_value)
-                            elif row_bucket_index < col_bucket_index:
-                                attn_weights.fill_(max_neg_value)
-
-                    p = torch.exp(attn_weights - lsec)
-
-                    if exists(col_mask):
-                        p = einx.where('b j, b h i j, -> b h i j', col_mask, p, 0.)
-
-                    dv_chunk = einsum('... i j, ... i d -> ... j d', p, doc)
-                    dp = einsum('... i d, ... j d -> ... i j', doc, vc)
-
-                    D = (doc * oc).sum(dim = -1, keepdims = True)
-                    ds = p * scale * (dp - D)
-
-                    dq_chunk = einsum('... i j, ... j d -> ... i d', ds, kc)
-                    dk_chunk = einsum('... i j, ... i d -> ... j d', ds, qc)
-
-                    dqc.add_(dq_chunk)
-                    dkc.add_(dk_chunk)
-                    dvc.add_(dv_chunk)
-
-            if ring_reduce_col:
-
-                dkv = kv_and_dkv[2:]
-
-                max_ring_passes = default(max_ring_passes, ring_size)
-                dkv = ring_pass(ring_size - max_ring_passes + 1, dkv)
-
-                dk, dv = dkv
+            dk, dv = dkv
 
         return dq, dk, dv, None, None, None, None, None, None, None
 
