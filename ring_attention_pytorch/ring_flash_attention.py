@@ -192,7 +192,7 @@ class RingFlashAttentionFunction(Function):
 
         o.div_(all_row_sums)
 
-        lse = all_row_sums.log() + all_row_maxes
+        lse = all_row_sums.clamp(min = EPSILON).log() + all_row_maxes
 
         ctx.args = (
             causal,
