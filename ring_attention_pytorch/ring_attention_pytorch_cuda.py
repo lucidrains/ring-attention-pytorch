@@ -17,10 +17,10 @@ from ring_attention_pytorch.ring import (
 # make sure flash attention is installed for forwards
 
 import importlib
+from importlib.metadata import version
 
-if not exists(importlib.util.find_spec('flash-attn')):
-    print('flash-attn must be installed. `pip install flash-attn --no-build-isolation` first')
-    exit()
+assert exists(importlib.util.find_spec('flash_attn')), 'flash-attn must be installed. `pip install flash-attn==2.5.1.post1 --no-build-isolation` first'
+assert version('flash_attn') == '2.5.1.post1'
 
 from flash_attn.flash_attn_interface import (
     _flash_attn_varlen_backward
@@ -28,9 +28,8 @@ from flash_attn.flash_attn_interface import (
 
 # make sure triton is installed for backwards
 
-if not exists(importlib.util.find_spec('triton')):
-    print('specific version of triton must be installed. `pip install triton==2.0.0.dev20221202` first')
-    exit()
+assert exists(importlib.util.find_spec('triton')), 'specific version of triton must be installed. `pip install triton==2.0.0.dev20221202` first'
+assert version('triton') == '2.0.0.dev20221202'
 
 import triton
 import triton.language as tl
