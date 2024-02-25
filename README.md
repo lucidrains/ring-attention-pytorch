@@ -10,8 +10,6 @@ I believe this is being used for the 1-10 million tokens for the latest Gemini. 
 
 In addition, the repository also contains the logic for <a href="https://arxiv.org/abs/2311.09431">Striped Attention</a>, a follow up paper that permutes the sequence for better workload balancing for autoregressive transformers.
 
-I will be running out of sponsorship early next month. So if you'd like to see that this project gets completed, you need to sponsor me, and soon, or I will be leaving the open source scene for employment.
-
 ## Appreciation
 
 - <a href="https://a16z.com/supporting-the-open-source-ai-community/">A16Z Open Source AI Grant Program</a> for the generous sponsorship, as well as my other sponsors, for affording me the independence to open source current artificial intelligence research
