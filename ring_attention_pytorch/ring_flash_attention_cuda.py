@@ -3,6 +3,7 @@ from typing import Optional
 
 import torch
 from torch import nn, einsum, Tensor
+import torch.nn.functional as F
 from torch.autograd.function import Function
 
 from ring_attention_pytorch.ring import (
@@ -412,8 +413,7 @@ class RingFlashAttentionCUDAFunction(Function):
         max_lookback_seq_len: Optional[int],
         ring_size: Optional[int]
     ):
-        assert not striped_ring_attn, 'striped ring attention will need to wait for a PR upstream to flash-attn that changes the causal masking for workload balancing'
-
+        row_length = q.shape[-2]
         ring_size = default(ring_size, get_world_size())
 
         cross_attn = q.shape[-2] != k.shape[-2]
@@ -480,10 +480,15 @@ class RingFlashAttentionCUDAFunction(Function):
             block_causal = False
 
             if causal:
-                block_causal = get_rank() == ring_rank
+                if striped_ring_attn:
+                    block_causal = True
+                    q = F.pad(q, (0, 0, 0, 1), value = 0.)
 
-                if get_rank() < ring_rank:
-                    continue
+                else:
+                    block_causal = get_rank() == ring_rank
+
+                    if get_rank() < ring_rank:
+                        continue
 
             o, m, lse, softmax_scale = flash_attn_forward(
                 q, k, v,
@@ -493,6 +498,12 @@ class RingFlashAttentionCUDAFunction(Function):
                 lse = lse,
                 softmax_scale = softmax_scale
             )
+
+        # remove extra row token for hacked causal masking for striped ring attention
+
+        o = o[:, :, :row_length]
+        m = m[:, :, :row_length]
+        lse = lse[:, :, :row_length]
 
         # scale final output, taking into account running maximum and lse
 
@@ -534,6 +545,8 @@ class RingFlashAttentionCUDAFunction(Function):
 
         q, k, v, o, lse = ctx.saved_tensors
 
+        row_length = q.shape[-2]
+
         per_machine_seq_size = k.shape[-2]
         per_machine_buckets = per_machine_seq_size // bucket_size
 
@@ -559,10 +572,16 @@ class RingFlashAttentionCUDAFunction(Function):
             block_causal = False
 
             if causal:
-                block_causal = get_rank() == ring_rank
+                if striped_ring_attn:
+                    block_causal = True
 
-                if get_rank() < ring_rank:
-                    continue
+                    if get_rank() < ring_rank:
+                        q = F.pad(q, (0, 0, 0, 1), value = 0.)
+                else:
+                    block_causal = get_rank() == ring_rank
+
+                    if get_rank() < ring_rank:
+                        continue
 
             ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
                 dout = do,
@@ -585,6 +604,8 @@ class RingFlashAttentionCUDAFunction(Function):
                 alibi_slopes = None,
                 deterministic = False
             )
+
+            ring_dq = ring_dq[:, :, :row_length]
 
             dq.add_(ring_dq)
             dk.add_(ring_dk)
