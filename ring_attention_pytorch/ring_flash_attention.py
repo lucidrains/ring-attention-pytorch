@@ -192,7 +192,7 @@ class RingFlashAttentionFunction(Function):
 
         o.div_(all_row_sums)
 
-        lse = all_row_sums.log() + all_row_maxes
+        lse = all_row_sums.clamp(min = EPSILON).log() + all_row_maxes
 
         ctx.args = (
             causal,
@@ -317,14 +317,15 @@ class RingFlashAttentionFunction(Function):
                     dkc.add_(dk_chunk)
                     dvc.add_(dv_chunk)
 
-            if ring_reduce_col:
+            if not ring_reduce_col:
+                continue
 
-                dkv = kv_and_dkv[2:]
+            dkv = kv_and_dkv[2:]
 
-                max_ring_passes = default(max_ring_passes, ring_size)
-                dkv = ring_pass(ring_size - max_ring_passes + 1, dkv)
+            max_ring_passes = default(max_ring_passes, ring_size)
+            dkv = ring_pass(ring_size - max_ring_passes + 1, dkv)
 
-                dk, dv = dkv
+            dk, dv = dkv
 
         return dq, dk, dv, None, None, None, None, None, None, None
 

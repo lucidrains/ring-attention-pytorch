@@ -10,8 +10,6 @@ I believe this is being used for the 1-10 million tokens for the latest Gemini. 
 
 In addition, the repository also contains the logic for <a href="https://arxiv.org/abs/2311.09431">Striped Attention</a>, a follow up paper that permutes the sequence for better workload balancing for autoregressive transformers.
 
-I will be running out of sponsorship early next month. So if you'd like to see that this project gets completed, you need to sponsor me, and soon, or I will be leaving the open source scene for employment.
-
 ## Appreciation
 
 - <a href="https://a16z.com/supporting-the-open-source-ai-community/">A16Z Open Source AI Grant Program</a> for the generous sponsorship, as well as my other sponsors, for affording me the independence to open source current artificial intelligence research
@@ -74,7 +72,8 @@ $ python assert.py
 - [x] ability to have ring size < world size, sharding the batch and sequence, and doing ring reduce with the correct set of ranks
 
 - [ ] add flash attention kernel version in the presence of cuda
-    - [ ] for backwards, use Tri's flash attention kernels, accumulate dq, dk, dv across rings
+    - [x] for backwards, use Tri's flash attention kernels, accumulate dq, dk, dv across rings
+    - [ ] figure out how Tri handles key padding mask for backwards
     - [ ] for forwards, use modified Triton flash attention forwards that outputs row sums, maxes, and exponentiated weighted sum
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
