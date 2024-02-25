@@ -579,6 +579,8 @@ class RingFlashAttentionCUDAFunction(Function):
                     block_causal = True
 
                     if get_rank() < ring_rank:
+                        # this is a hack that should also mask out the diagonal
+                        # https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#21-change-behavior-of-causal-flag
                         q = F.pad(q, (0, 0, 0, 1), value = 0.)
                 else:
                     block_causal = get_rank() == ring_rank
