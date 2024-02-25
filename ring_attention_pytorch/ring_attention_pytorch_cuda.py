@@ -14,7 +14,7 @@ from ring_attention_pytorch.ring import (
     get_world_size
 )
 
-# make sure flash attention is installed for forwards
+# make sure flash attention is installed for backwards
 
 import importlib
 from importlib.metadata import version
@@ -26,7 +26,7 @@ from flash_attn.flash_attn_interface import (
     _flash_attn_varlen_backward
 )
 
-# make sure triton is installed for backwards
+# make sure triton is installed for forwards
 
 assert exists(importlib.util.find_spec('triton')), 'specific version of triton must be installed. `pip install triton==2.0.0.dev20221202` first'
 assert version('triton') == '2.0.0.dev20221202'
@@ -37,17 +37,6 @@ import triton.language as tl
 # taking the flash attention forwards from Tri's flash_attn repository
 # https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/flash_attn_triton.py
 # and modifying to return unnormalized accumulation, row maxes, row lse - reduced over passed rings
-
-import math
-
-import torch
-import triton
-import triton.language as tl
-
-from einops import rearrange
-
-def exists(v):
-    return v is not None
 
 @triton.heuristics(
     {
@@ -89,7 +78,7 @@ def _fwd_kernel(
     headdim,
     CACHE_KEY_SEQLEN_Q,
     CACHE_KEY_SEQLEN_K,
-    BIAS_TYPE: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
     BLOCK_HEADDIM: tl.constexpr,
     EVEN_M: tl.constexpr,
@@ -117,7 +106,7 @@ def _fwd_kernel(
         V + off_b * stride_vb + off_h * stride_vh + (offs_n[:, None] * stride_vn + offs_d[None, :])
     )
 
-    if BIAS_TYPE == "vector":
+    if HAS_BIAS:
         b_ptrs = Bias + off_b * stride_bb + off_h * stride_bh + offs_n
 
     t_ptrs = TMP + off_hb * seqlen_q_rounded + offs_m
@@ -204,15 +193,14 @@ def _fwd_kernel(
             qk += tl.where((start_n + offs_n)[None, :] < seqlen_k, 0, float("-inf"))
         if IS_CAUSAL:
             qk += tl.where(offs_m[:, None] >= (start_n + offs_n)[None, :], 0, float("-inf"))
-        if BIAS_TYPE != "none":
-            if BIAS_TYPE == "vector":
-                if EVEN_N:
-                    bias = tl.load(b_ptrs + start_n)
-                else:
-                    bias = tl.load(
-                        b_ptrs + start_n, mask=(start_n + offs_n) < seqlen_k, other=0.0
-                    )
-                bias = bias[None, :]
+        if HAS_BIAS:
+            if EVEN_N:
+                bias = tl.load(b_ptrs + start_n)
+            else:
+                bias = tl.load(
+                    b_ptrs + start_n, mask=(start_n + offs_n) < seqlen_k, other=0.0
+                )
+            bias = bias[None, :]
 
             bias = bias.to(tl.float32)
             qk = qk * softmax_scale + bias
@@ -257,6 +245,9 @@ def _fwd_kernel(
         l_i_new = tl.exp(lse_i - m_ij) + l_ij
         lse_i = m_ij + tl.log(l_i_new)
 
+    start_m = tl.program_id(0)
+    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+
     # write back l and m
 
     tl.store(lse_ptrs, lse_i)
@@ -296,7 +287,6 @@ def flash_attn_forward(
     q, k, v = [rearrange(t, 'b h n d -> b n h d') for t in (q, k, v)]
     q, k, v = [x if is_contiguous(x) else x.contiguous() for x in (q, k, v)]
 
-    device = q.device
     batch, seqlen_q, nheads, d = q.shape
     _, seqlen_k, _, _ = k.shape
 
@@ -313,28 +303,27 @@ def flash_attn_forward(
     if has_bias:
         assert bias.dtype in [q.dtype, torch.float]
         assert bias.is_cuda
-        assert bias.dim() == 4
+
+        if bias.ndim == 3:
+            bias = repeat(bias, 'b j -> b h i j', h = nheads, i = seqlen_q)
+
         if bias.stride(-1) != 1:
             bias = bias.contiguous()
-        if bias.shape[2:] == (1, seqlen_k):
-            bias_type = "vector"
-        else:
-            raise RuntimeError(
-                "Last 2 dimensions of bias must be (1, seqlen_k)" " or (seqlen_q, seqlen_k)"
-            )
+
+        assert bias.shape[-2:] == (1, seqlen_k)
         bias = bias.expand(batch, nheads, seqlen_q, seqlen_k)
 
     bias_strides = (bias.stride(0), bias.stride(1), bias.stride(2)) if has_bias else (0, 0, 0)
 
     seqlen_q_rounded = math.ceil(seqlen_q / 128) * 128
 
-    max_neg_value = -torch.finfo(torch.float32).max
-
     if not exists(lse):
-        lse = torch.full((batch, nheads, seqlen_q_rounded), max_neg_value, device=device, dtype=torch.float32)
+        max_neg_value = -torch.finfo(torch.float32).max
+        lse = torch.full((batch, nheads, seqlen_q_rounded), max_neg_value, device=q.device, dtype=torch.float32)
 
     if not exists(m):
-        m = torch.full((batch, nheads, seqlen_q_rounded), max_neg_value, dtype=device)
+        max_neg_value = -torch.finfo(torch.float32).max
+        m = torch.full((batch, nheads, seqlen_q_rounded), max_neg_value, device=q.device, dtype=torch.float32)
 
     if not exists(o):
         o = torch.zeros_like(q)
@@ -376,7 +365,7 @@ def flash_attn_forward(
         d,
         seqlen_q // 32,
         seqlen_k // 32,
-        bias_type,
+        has_bias,
         causal,
         BLOCK_HEADDIM,
         BLOCK_M = BLOCK,
@@ -385,7 +374,7 @@ def flash_attn_forward(
         num_stages = 1,
     )
 
-    return o, lse, m, softmax_scale
+    return o, m, lse, softmax_scale
 
 # helper functions
 
@@ -488,7 +477,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
             k, v = kv
 
-            o, lse, m, softmax_scale = flash_attn_forward(
+            o, m, lse, softmax_scale = flash_attn_forward(
                 q, k, v,
                 causal = causal,
                 o = o,
