@@ -63,6 +63,7 @@ def _fwd_kernel(
     V,
     Bias,
     Out,
+    M,
     Lse,
     TMP,
     softmax_scale,
@@ -123,7 +124,9 @@ def _fwd_kernel(
 
     # maximum
 
-    m_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
+    m_ptrs = M + off_hb * seqlen_q_rounded + offs_m
+
+    m_i = tl.load(m_ptrs)
 
     # load lse
 
@@ -258,6 +261,8 @@ def _fwd_kernel(
 
     tl.store(lse_ptrs, lse_i)
 
+    tl.store(m_ptrs, m_i)
+
     # write to output
 
     if EVEN_M:
@@ -291,6 +296,7 @@ def flash_attn_forward(
     q, k, v = [rearrange(t, 'b h n d -> b n h d') for t in (q, k, v)]
     q, k, v = [x if is_contiguous(x) else x.contiguous() for x in (q, k, v)]
 
+    device = q.device
     batch, seqlen_q, nheads, d = q.shape
     _, seqlen_k, _, _ = k.shape
 
@@ -322,9 +328,13 @@ def flash_attn_forward(
 
     seqlen_q_rounded = math.ceil(seqlen_q / 128) * 128
 
+    max_neg_value = -torch.finfo(torch.float32).max
+
     if not exists(lse):
-        max_neg_value = -torch.finfo(torch.float32).max
-        lse = torch.full((batch, nheads, seqlen_q_rounded), max_neg_value, device=q.device, dtype=torch.float32)
+        lse = torch.full((batch, nheads, seqlen_q_rounded), max_neg_value, device=device, dtype=torch.float32)
+
+    if not exists(m):
+        m = torch.full((batch, nheads, seqlen_q_rounded), max_neg_value, dtype=device)
 
     if not exists(o):
         o = torch.zeros_like(q)
@@ -342,6 +352,7 @@ def flash_attn_forward(
         v,
         bias,
         o,
+        m,
         lse,
         tmp,
         softmax_scale,
