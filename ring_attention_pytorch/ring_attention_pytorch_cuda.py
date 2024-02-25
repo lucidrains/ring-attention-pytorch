@@ -118,13 +118,6 @@ def _fwd_kernel(
 
     if BIAS_TYPE == "vector":
         b_ptrs = Bias + off_b * stride_bb + off_h * stride_bh + offs_n
-    elif BIAS_TYPE == "matrix":
-        b_ptrs = (
-            Bias
-            + off_b * stride_bb
-            + off_h * stride_bh
-            + (offs_m[:, None] * stride_bm + offs_n[None, :])
-        )
 
     t_ptrs = TMP + off_hb * seqlen_q_rounded + offs_m
 
@@ -217,16 +210,6 @@ def _fwd_kernel(
                         b_ptrs + start_n, mask=(start_n + offs_n) < seqlen_k, other=0.0
                     )
                 bias = bias[None, :]
-            elif BIAS_TYPE == "matrix":
-                if EVEN_M & EVEN_N:
-                    bias = tl.load(b_ptrs + start_n)
-                else:
-                    bias = tl.load(
-                        b_ptrs + start_n,
-                        mask=(offs_m[:, None] < seqlen_q)
-                        & ((start_n + offs_n)[None, :] < seqlen_k),
-                        other=0.0,
-                    )
 
             bias = bias.to(tl.float32)
             qk = qk * softmax_scale + bias
@@ -329,8 +312,6 @@ def flash_attn_forward(
             bias = bias.contiguous()
         if bias.shape[2:] == (1, seqlen_k):
             bias_type = "vector"
-        elif bias.shape[2:] == (seqlen_q, seqlen_k):
-            bias_type = "matrix"
         else:
             raise RuntimeError(
                 "Last 2 dimensions of bias must be (1, seqlen_k)" " or (seqlen_q, seqlen_k)"
