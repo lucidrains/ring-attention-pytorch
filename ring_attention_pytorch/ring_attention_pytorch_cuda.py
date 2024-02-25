@@ -75,7 +75,6 @@ def _fwd_kernel(
     seqlen_q,
     seqlen_k,
     seqlen_q_rounded,
-    global_k_offset,
     headdim,
     CACHE_KEY_SEQLEN_Q,
     CACHE_KEY_SEQLEN_K,
@@ -166,7 +165,6 @@ def _fwd_kernel(
             )
 
     end_n = seqlen_k if not IS_CAUSAL else tl.minimum((start_m + 1) * BLOCK_M, seqlen_k)
-
     for start_n in range(0, end_n, BLOCK_N):
         start_n = tl.multiple_of(start_n, BLOCK_N)
 
@@ -193,10 +191,8 @@ def _fwd_kernel(
 
         if not EVEN_N:
             qk += tl.where((start_n + offs_n)[None, :] < seqlen_k, 0, float("-inf"))
-
         if IS_CAUSAL:
-            qk += tl.where(offs_m[:, None] >= (start_n + offs_n + global_k_offset)[None, :], 0, float("-inf"))
-
+            qk += tl.where(offs_m[:, None] >= (start_n + offs_n)[None, :], 0, float("-inf"))
         if HAS_BIAS:
             if EVEN_N:
                 bias = tl.load(b_ptrs + start_n)
@@ -285,8 +281,7 @@ def flash_attn_forward(
     o = None,
     m = None,
     lse = None,
-    softmax_scale = None,
-    global_k_offset = 0
+    softmax_scale = None
 ):
 
     q, k, v = [rearrange(t, 'b h n d -> b n h d') for t in (q, k, v)]
@@ -367,7 +362,6 @@ def flash_attn_forward(
         seqlen_q,
         seqlen_k,
         seqlen_q_rounded,
-        global_k_offset,
         d,
         seqlen_q // 32,
         seqlen_k // 32,
@@ -452,6 +446,8 @@ class RingFlashAttentionCUDAFunction(Function):
 
         orig_k, orig_v, orig_mask, device = k, v, mask, q.device
 
+        row_ring_rank = (get_rank() % ring_size) if ring_reduce_col else 0
+
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
 
         max_neg_value = -torch.finfo(q.dtype).max
@@ -487,8 +483,7 @@ class RingFlashAttentionCUDAFunction(Function):
                 o = o,
                 m = m,
                 lse = lse,
-                softmax_scale = softmax_scale,
-                global_k_offset = ring_rank * per_machine_seq_size
+                softmax_scale = softmax_scale
             )
 
         # scale final output, taking into account running maximum and lse
@@ -530,6 +525,8 @@ class RingFlashAttentionCUDAFunction(Function):
         ) = ctx.args
 
         q, k, v, o, lse = ctx.saved_tensors
+
+        row_ring_rank = (get_rank() % ring_size) if ring_reduce_col else 0
 
         per_machine_seq_size = k.shape[-2]
         per_machine_buckets = per_machine_seq_size // bucket_size
