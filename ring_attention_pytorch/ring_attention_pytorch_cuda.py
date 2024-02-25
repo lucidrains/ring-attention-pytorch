@@ -446,11 +446,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
         orig_k, orig_v, orig_mask, device = k, v, mask, q.device
 
-        row_ring_rank = (get_rank() % ring_size) if ring_reduce_col else 0
-
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
-
-        max_neg_value = -torch.finfo(q.dtype).max
 
         num_tiles = math.ceil(per_machine_seq_size / bucket_size)
 
@@ -477,9 +473,21 @@ class RingFlashAttentionCUDAFunction(Function):
 
             k, v = kv
 
+            # for non-striped attention
+            # if the kv ring rank is equal to the current rank (block diagonal), then turn on causal
+            # for striped attention, it is always causal, but a lt or gt sign needs to be changed to lte or gte within the cuda code, when determining masking out
+
+            block_causal = False
+
+            if causal:
+                block_causal = get_rank() == ring_rank
+
+                if get_rank() < ring_rank:
+                    continue
+
             o, m, lse, softmax_scale = flash_attn_forward(
                 q, k, v,
-                causal = causal,
+                causal = block_causal,
                 o = o,
                 m = m,
                 lse = lse,
@@ -526,16 +534,12 @@ class RingFlashAttentionCUDAFunction(Function):
 
         q, k, v, o, lse = ctx.saved_tensors
 
-        row_ring_rank = (get_rank() % ring_size) if ring_reduce_col else 0
-
         per_machine_seq_size = k.shape[-2]
         per_machine_buckets = per_machine_seq_size // bucket_size
 
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
 
         device = q.device
-
-        max_neg_value = -torch.finfo(q.dtype).max
 
         dq = torch.zeros_like(q)
         dk = torch.zeros_like(k)
@@ -551,6 +555,14 @@ class RingFlashAttentionCUDAFunction(Function):
         for ring_rank, ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             k, v, dk, dv = kv_and_dkv
+
+            block_causal = False
+
+            if causal:
+                block_causal = get_rank() == ring_rank
+
+                if get_rank() < ring_rank:
+                    continue
 
             ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
                 dout = do,
@@ -568,7 +580,7 @@ class RingFlashAttentionCUDAFunction(Function):
                 max_seqlen_k = None,
                 dropout_p = 0.,
                 softmax_scale = softmax_scale,
-                causal = causal,
+                causal = block_causal,
                 window_size = bucket_size,
                 alibi_slopes = None,
                 deterministic = False
