@@ -34,9 +34,20 @@ assert version('triton') == '2.0.0.dev20221202'
 import triton
 import triton.language as tl
 
-# taking the flash attention forwards
-# from https://triton-lang.org/main/getting-started/tutorials/06-fused-attention.html#sphx-glr-getting-started-tutorials-06-fused-attention-py
-# and modifying to return unnormalized accumulation, row maxes, row sums - reduced over passed rings
+# taking the flash attention forwards from Tri's flash_attn repository
+# https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/flash_attn_triton.py
+# and modifying to return unnormalized accumulation, row maxes, row lse - reduced over passed rings
+
+import math
+
+import torch
+import triton
+import triton.language as tl
+
+from einops import rearrange
+
+def exists(v):
+    return v is not None
 
 @triton.heuristics(
     {
@@ -53,7 +64,7 @@ def _fwd_kernel(
     Bias,
     Out,
     Lse,
-    TMP,  # NOTE: TMP is a scratchpad buffer to workaround a compiler bug
+    TMP,
     softmax_scale,
     stride_qb,
     stride_qh,
@@ -90,17 +101,11 @@ def _fwd_kernel(
     off_hb = tl.program_id(1)
     off_b = off_hb // nheads
     off_h = off_hb % nheads
-    # off_b = tl.program_id(1)
-    # off_h = tl.program_id(2)
-    # off_hb = off_b * nheads + off_h
-    # initialize offsets
+
     offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_HEADDIM)
-    # Initialize pointers to Q, K, V
-    # Adding parenthesis around indexing might use int32 math instead of int64 math?
-    # https://github.com/openai/triton/issues/741
-    # I'm seeing a tiny bit of difference (5-7us)
+
     q_ptrs = (
         Q + off_b * stride_qb + off_h * stride_qh + (offs_m[:, None] * stride_qm + offs_d[None, :])
     )
@@ -110,6 +115,7 @@ def _fwd_kernel(
     v_ptrs = (
         V + off_b * stride_vb + off_h * stride_vh + (offs_n[:, None] * stride_vn + offs_d[None, :])
     )
+
     if BIAS_TYPE == "vector":
         b_ptrs = Bias + off_b * stride_bb + off_h * stride_bh + offs_n
     elif BIAS_TYPE == "matrix":
@@ -119,14 +125,47 @@ def _fwd_kernel(
             + off_h * stride_bh
             + (offs_m[:, None] * stride_bm + offs_n[None, :])
         )
-    # initialize pointer to m and l
+
     t_ptrs = TMP + off_hb * seqlen_q_rounded + offs_m
-    lse_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
+
+    # maximum
+
     m_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
-    acc_o = tl.zeros([BLOCK_M, BLOCK_HEADDIM], dtype=tl.float32)
-    # load q: it will stay in SRAM throughout
-    # [2022-10-30] TD: Triton bug - in the case of EVEN_M=True and EVEN_N=False, if we just call
-    # tl.load(q_ptrs), we get the wrong output!
+
+    # load lse
+
+    lse_ptrs = Lse + off_hb * seqlen_q_rounded + offs_m
+
+    lse_i = tl.load(lse_ptrs)
+
+    # load accumualted output
+
+    offs_d = tl.arange(0, BLOCK_HEADDIM)
+
+    out_ptrs = (
+        Out
+        + off_b * stride_ob
+        + off_h * stride_oh
+        + (offs_m[:, None] * stride_om + offs_d[None, :])
+    )
+
+    if EVEN_M:
+        if EVEN_HEADDIM:
+            acc_o = tl.load(out_ptrs)
+        else:
+            acc_o = tl.load(out_ptrs, mask=offs_d[None, :] < headdim)
+    else:
+        if EVEN_HEADDIM:
+            acc_o = tl.load(out_ptrs, mask=offs_m[:, None] < seqlen_q)
+        else:
+            acc_o = tl.load(
+                out_ptrs, mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim)
+            )
+
+    acc_o = acc_o.to(tl.float32)
+
+    # load queries, keys, values
+
     if EVEN_M & EVEN_N:
         if EVEN_HEADDIM:
             q = tl.load(q_ptrs)
@@ -139,12 +178,12 @@ def _fwd_kernel(
             q = tl.load(
                 q_ptrs, mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim), other=0.0
             )
-    # loop over k, v and update accumulator
+
     end_n = seqlen_k if not IS_CAUSAL else tl.minimum((start_m + 1) * BLOCK_M, seqlen_k)
     for start_n in range(0, end_n, BLOCK_N):
         start_n = tl.multiple_of(start_n, BLOCK_N)
-        # -- compute qk ----
-        if EVEN_N & EVEN_M:  # If we just do "if EVEN_N", there seems to be some race condition
+
+        if EVEN_N & EVEN_M:
             if EVEN_HEADDIM:
                 k = tl.load(k_ptrs + start_n * stride_kn)
             else:
@@ -164,51 +203,48 @@ def _fwd_kernel(
                 )
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         qk += tl.dot(q, k, trans_b=True)
-        # Trying to combine the two masks seem to make the result wrong
-        if not EVEN_N:  # Need to mask out otherwise the softmax is wrong
+
+        if not EVEN_N:
             qk += tl.where((start_n + offs_n)[None, :] < seqlen_k, 0, float("-inf"))
         if IS_CAUSAL:
             qk += tl.where(offs_m[:, None] >= (start_n + offs_n)[None, :], 0, float("-inf"))
         if BIAS_TYPE != "none":
             if BIAS_TYPE == "vector":
                 if EVEN_N:
-                    bias = tl.load(b_ptrs + start_n).to(tl.float32)
+                    bias = tl.load(b_ptrs + start_n)
                 else:
                     bias = tl.load(
                         b_ptrs + start_n, mask=(start_n + offs_n) < seqlen_k, other=0.0
-                    ).to(tl.float32)
+                    )
                 bias = bias[None, :]
             elif BIAS_TYPE == "matrix":
                 if EVEN_M & EVEN_N:
-                    bias = tl.load(b_ptrs + start_n).to(tl.float32)
+                    bias = tl.load(b_ptrs + start_n)
                 else:
                     bias = tl.load(
                         b_ptrs + start_n,
                         mask=(offs_m[:, None] < seqlen_q)
                         & ((start_n + offs_n)[None, :] < seqlen_k),
                         other=0.0,
-                    ).to(tl.float32)
-            # Slightly faster to multiply the softmax_scale in the tl.exp below since the compiler
-            # can then fuse the mult and add into an fma instruction. But if we have bias we need to
-            # to multiply with softmax_scale here.
+                    )
+
+            bias = bias.to(tl.float32)
             qk = qk * softmax_scale + bias
             m_ij = tl.maximum(tl.max(qk, 1), lse_i)
             p = tl.exp(qk - m_ij[:, None])
         else:
             m_ij = tl.maximum(tl.max(qk, 1) * softmax_scale, lse_i)
             p = tl.exp(qk * softmax_scale - m_ij[:, None])
+
         l_ij = tl.sum(p, 1)
 
-        # scale acc_o
         acc_o_scale = tl.exp(m_i - m_ij)
 
-        # # -- update output accumulator --
-        # BUG: have to store and immediately load
         tl.store(t_ptrs, acc_o_scale)
         acc_o_scale = tl.load(t_ptrs)
         acc_o = acc_o * acc_o_scale[:, None]
-        # update acc_o
-        if EVEN_N & EVEN_M:  # If we just do "if EVEN_N", there seems to be some race condition
+
+        if EVEN_N & EVEN_M:
             if EVEN_HEADDIM:
                 v = tl.load(v_ptrs + start_n * stride_vn)
             else:
@@ -226,6 +262,7 @@ def _fwd_kernel(
                     mask=((start_n + offs_n)[:, None] < seqlen_k) & (offs_d[None, :] < headdim),
                     other=0.0,
                 )
+
         p = p.to(v.dtype)
         acc_o += tl.dot(p, v)
 
@@ -234,25 +271,12 @@ def _fwd_kernel(
         l_i_new = tl.exp(lse_i - m_ij) + l_ij
         lse_i = m_ij + tl.log(l_i_new)
 
-    o_scale = tl.exp(m_i - lse_i)
-    # BUG: have to store and immediately load
-    tl.store(t_ptrs, o_scale)
-    o_scale = tl.load(t_ptrs)
-    acc_o = acc_o * o_scale[:, None]
-    # rematerialize offsets to save registers
-    start_m = tl.program_id(0)
-    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
     # write back l and m
-    lse_ptrs = Lse + off_hb * seqlen_q_rounded + offs_m
+
     tl.store(lse_ptrs, lse_i)
-    # initialize pointers to output
-    offs_d = tl.arange(0, BLOCK_HEADDIM)
-    out_ptrs = (
-        Out
-        + off_b * stride_ob
-        + off_h * stride_oh
-        + (offs_m[:, None] * stride_om + offs_d[None, :])
-    )
+
+    # write to output
+
     if EVEN_M:
         if EVEN_HEADDIM:
             tl.store(out_ptrs, acc_o)
@@ -266,10 +290,27 @@ def _fwd_kernel(
                 out_ptrs, acc_o, mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim)
             )
 
-def _flash_attn_forward(q, k, v, bias=None, causal=False, softmax_scale=None):
-    # shape constraints
+def is_contiguous(x):
+    return x.stride(-1) == 1
+
+def flash_attn_forward(
+    q,
+    k,
+    v,
+    bias = None,
+    causal = False,
+    o = None,
+    m = None,
+    lse = None,
+    softmax_scale = None
+):
+
+    q, k, v = [rearrange(t, 'b h n d -> b n h d') for t in (q, k, v)]
+    q, k, v = [x if is_contiguous(x) else x.contiguous() for x in (q, k, v)]
+
     batch, seqlen_q, nheads, d = q.shape
     _, seqlen_k, _, _ = k.shape
+
     assert k.shape == (batch, seqlen_k, nheads, d)
     assert v.shape == (batch, seqlen_k, nheads, d)
     assert d <= 128, "FlashAttention only support head dimensions up to 128"
@@ -295,17 +336,25 @@ def _flash_attn_forward(q, k, v, bias=None, causal=False, softmax_scale=None):
                 "Last 2 dimensions of bias must be (1, seqlen_k)" " or (seqlen_q, seqlen_k)"
             )
         bias = bias.expand(batch, nheads, seqlen_q, seqlen_k)
+
     bias_strides = (bias.stride(0), bias.stride(1), bias.stride(2)) if has_bias else (0, 0, 0)
 
     seqlen_q_rounded = math.ceil(seqlen_q / 128) * 128
-    lse = torch.empty((batch, nheads, seqlen_q_rounded), device=q.device, dtype=torch.float32)
+
+    if not exists(lse):
+        max_neg_value = -torch.finfo(torch.float32).max
+        lse = torch.full((batch, nheads, seqlen_q_rounded), max_neg_value, device=q.device, dtype=torch.float32)
+
+    if not exists(o):
+        o = torch.zeros_like(q)
+
     tmp = torch.empty((batch, nheads, seqlen_q_rounded), device=q.device, dtype=torch.float32)
-    o = torch.empty_like(q)
 
     BLOCK_HEADDIM = max(triton.next_power_of_2(d), 16)
     BLOCK = 128
     num_warps = 4 if d <= 64 else 8
     grid = lambda META: (triton.cdiv(seqlen_q, META["BLOCK_M"]), batch * nheads)
+
     _fwd_kernel[grid](
         q,
         k,
@@ -334,33 +383,17 @@ def _flash_attn_forward(q, k, v, bias=None, causal=False, softmax_scale=None):
         seqlen_q_rounded,
         d,
         seqlen_q // 32,
-        seqlen_k // 32,  # key for triton cache (limit number of compilations)
-        # Can't use kwargs here because triton autotune expects key to be args, not kwargs
-        # IS_CAUSAL=causal, BLOCK_HEADDIM=d,
+        seqlen_k // 32,
         bias_type,
         causal,
         BLOCK_HEADDIM,
-        BLOCK_M=BLOCK,
-        BLOCK_N=BLOCK,
-        num_warps=num_warps,
-        num_stages=1,
+        BLOCK_M = BLOCK,
+        BLOCK_N = BLOCK,
+        num_warps = num_warps,
+        num_stages = 1,
     )
-    return o, lse, softmax_scale  # softmax_scale could have been updated
 
-def flash_attn_forward(q, k, v, bias=None, causal=False, softmax_scale=None):
-    """
-    q: (batch_size, seqlen_q, nheads, headdim)
-    k, v: (batch_size, seqlen_k, nheads, headdim)
-    bias: optional, shape broadcastible to (batch, nheads, seqlen_q, seqlen_k).
-        For example, ALiBi mask for causal would have shape (1, nheads, 1, seqlen_k).
-        ALiBi mask for non-causal would have shape (1, nheads, seqlen_q, seqlen_k)
-    """
-    # Make sure that the last dimension is contiguous
-    q, k, v = [x if x.stride(-1) == 1 else x.contiguous() for x in [q, k, v]]
-    o, lse, softmax_scale = _flash_attn_forward(
-        q, k, v, bias=bias, causal=causal, softmax_scale=softmax_scale
-    )
-    return o
+    return o, lse, m, softmax_scale
 
 # helper functions
 
@@ -438,15 +471,21 @@ class RingFlashAttentionCUDAFunction(Function):
 
         max_neg_value = -torch.finfo(q.dtype).max
 
-        o = torch.zeros_like(q)
-        all_row_sums = torch.zeros((*q.shape[:-1], 1), device = device)
-        all_row_maxes = torch.full((*q.shape[:-1], 1), max_neg_value, device = device)
-
-        scale = (q.shape[-1] ** -0.5)
-
         num_tiles = math.ceil(per_machine_seq_size / bucket_size)
 
         kv = torch.stack((k, v))
+
+        # accumulated values
+
+        # o - output
+        # m - maximum
+        # lse - logsumexp
+        # softmax_scale - scale changes as it is being reduced in new flash attention, do not totally understand the need for this just yet
+
+        o = None
+        m = None
+        lse = None
+        softmax_scale = None
 
         # receive buffers, to be alternated with sent buffer
 
@@ -457,27 +496,23 @@ class RingFlashAttentionCUDAFunction(Function):
 
             k, v = kv
 
-            # notation that researchers use is
-            # o - output
-            # m - row maxes
-            # l - row sums
-            # m and l is summarized into a single logsumexp (lse) at the end for backward
-
-            _attn_fwd(
-                q, k, v
-                scale,
-                o,
-                all_row_sums,
-                all_row_maxes
+            o, lse, m, softmax_scale = flash_attn_forward(
+                q, k, v,
+                causal = causal,
+                o = o,
+                m = m,
+                lse = lse,
+                softmax_scale = softmax_scale
             )
 
-        o.div_(all_row_sums)
+        # scale final output, taking into account running maximum and lse
 
-        lse = all_row_sums.clamp(min = EPSILON).log() + all_row_maxes
+        o_scale = torch.exp(m - lse)
+        o.mul_(o_scale[:, None])
 
         ctx.args = (
             causal,
-            scale,
+            softmax_scale,
             orig_mask,
             bucket_size,
             ring_reduce_col,
@@ -498,7 +533,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
         (
             causal,
-            scale,
+            softmax_scale,
             mask,
             bucket_size,
             ring_reduce_col,
@@ -551,7 +586,7 @@ class RingFlashAttentionCUDAFunction(Function):
                 max_seqlen_q = None,
                 max_seqlen_k = None,
                 dropout_p = 0.,
-                softmax_scale = scale,
+                softmax_scale = softmax_scale,
                 causal = causal,
                 window_size = bucket_size,
                 alibi_slopes = None,
