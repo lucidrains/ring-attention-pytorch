@@ -81,6 +81,7 @@ def _fwd_kernel(
     CACHE_KEY_SEQLEN_K,
     HAS_BIAS: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
+    CAUSAL_MASK_DIAGONAL: tl.constexpr,
     BLOCK_HEADDIM: tl.constexpr,
     EVEN_M: tl.constexpr,
     EVEN_N: tl.constexpr,
@@ -192,8 +193,14 @@ def _fwd_kernel(
 
         if not EVEN_N:
             qk += tl.where((start_n + offs_n)[None, :] < seqlen_k, 0, float("-inf"))
+
         if IS_CAUSAL:
-            qk += tl.where(offs_m[:, None] >= (start_n + offs_n)[None, :], 0, float("-inf"))
+            if CAUSAL_MASK_DIAGONAL:
+                # needed for stripe attention
+                qk += tl.where(offs_m[:, None] > (start_n + offs_n)[None, :], 0, float("-inf"))
+            else:
+                qk += tl.where(offs_m[:, None] >= (start_n + offs_n)[None, :], 0, float("-inf"))
+
         if HAS_BIAS:
             if EVEN_N:
                 bias = tl.load(b_ptrs + start_n)
@@ -282,7 +289,8 @@ def flash_attn_forward(
     o = None,
     m = None,
     lse = None,
-    softmax_scale = None
+    softmax_scale = None,
+    causal_mask_diagonal = False
 ):
 
     q, k, v = [rearrange(t, 'b h n d -> b n h d') for t in (q, k, v)]
@@ -368,6 +376,7 @@ def flash_attn_forward(
         seqlen_k // 32,
         has_bias,
         causal,
+        causal_mask_diagonal,
         BLOCK_HEADDIM,
         BLOCK_M = BLOCK,
         BLOCK_N = BLOCK,
@@ -413,7 +422,6 @@ class RingFlashAttentionCUDAFunction(Function):
         max_lookback_seq_len: Optional[int],
         ring_size: Optional[int]
     ):
-        row_length = q.shape[-2]
         ring_size = default(ring_size, get_world_size())
 
         cross_attn = q.shape[-2] != k.shape[-2]
@@ -478,12 +486,12 @@ class RingFlashAttentionCUDAFunction(Function):
             # for striped attention, it is always causal, but a lt or gt sign needs to be changed to lte or gte within the cuda code, when determining masking out
 
             block_causal = False
+            causal_mask_diagonal = False
 
             if causal:
                 if striped_ring_attn:
                     block_causal = True
-                    q = F.pad(q, (0, 0, 0, 1), value = 0.)
-
+                    causal_mask_diagonal = get_rank() < ring_rank
                 else:
                     block_causal = get_rank() == ring_rank
 
@@ -496,14 +504,9 @@ class RingFlashAttentionCUDAFunction(Function):
                 o = o,
                 m = m,
                 lse = lse,
-                softmax_scale = softmax_scale
+                softmax_scale = softmax_scale,
+                causal_mask_diagonal = causal_mask_diagonal
             )
-
-        # remove extra row token for hacked causal masking for striped ring attention
-
-        o = o[:, :, :row_length]
-        m = m[:, :, :row_length]
-        lse = lse[:, :, :row_length]
 
         # scale final output, taking into account running maximum and lse
 
