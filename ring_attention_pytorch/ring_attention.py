@@ -54,7 +54,7 @@ def default_attention(
 
     # similarity
 
-    sim = einsum('b h i d, b h j d -> b h i j', q, k)
+    sim = einsum('b i h d, b j h d -> b h i j', q, k)
 
     # masking
 
@@ -72,7 +72,7 @@ def default_attention(
 
     # aggregate
 
-    out = einsum('b h i j, b h j d -> b h i d', attn, v)
+    out = einsum('b h i j, b j h d -> b i d', attn, v)
 
     return out
 
@@ -257,6 +257,7 @@ class RingAttention(Module):
         force_regular_attn: bool = False,
         rotary_embed: bool = False,
         rotary_embed_theta: int = 10000,
+        use_cuda_kernel: bool = None
     ):
         super().__init__()
         self.eps = eps
@@ -300,6 +301,11 @@ class RingAttention(Module):
         )
 
         self.to_out = nn.Linear(dim_inner, dim, bias = False)
+
+        # whether to use flash attention cuda kernel
+
+        self.use_cuda_kernel = default(use_cuda_kernel, torch.cuda.is_available())
+        assert not (use_cuda_kernel and not torch.cuda.is_available())
 
     def forward(
         self,
@@ -351,8 +357,25 @@ class RingAttention(Module):
 
         # regular attention vs flash w/ or w/o kv ring reduce
 
+        any_cuda_inputs = any([t.is_cuda for t in (q, k, v)])
+
         if self.force_regular_attn:
             out = default_attention(q, k, v, mask = mask, causal = self.causal)
+
+        elif any_cuda_inputs and self.use_cuda_kernel:
+            from ring_attention_pytorch.ring_flash_attention_cuda import ring_flash_attention_cuda
+
+            out = ring_flash_attn_cuda(
+                q, k, v,
+                mask,
+                self.causal,
+                self.bucket_size,
+                ring_attn and not force_ring_reduce_off,
+                self.striped_ring_attn and not force_ring_reduce_off,
+                self.max_lookback_seq_len,
+                ring_size
+            )
+
         else:
             out = ring_flash_attn(
                 q, k, v,

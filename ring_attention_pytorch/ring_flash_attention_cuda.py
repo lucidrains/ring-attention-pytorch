@@ -432,7 +432,20 @@ class RingFlashAttentionCUDAFunction(Function):
         max_lookback_seq_len: Optional[int],
         ring_size: Optional[int]
     ):
-        max_neg_value = -torch.finfo(q.dtype).max
+        assert all([t.is_cuda for t in (q, k, v)]), 'inputs must be all on cuda'
+
+        dtype = q.dtype
+
+        if q.dtype == torch.float32:
+            q = q.half()
+
+        if k.dtype == torch.float32:
+            k = k.half()
+
+        if q.dtype == torch.float32:
+            v = v.half()
+
+        max_neg_value = -torch.finfo(dtype).max
         ring_size = default(ring_size, get_world_size())
 
         cross_attn = q.shape[-3] != k.shape[-3]
@@ -541,11 +554,15 @@ class RingFlashAttentionCUDAFunction(Function):
             max_ring_passes,
             num_lookback_buckets,
             striped_ring_attn,
-            ring_size
+            ring_size,
+            dtype
         )
 
         ctx.save_for_backward(q, orig_k, orig_v, o, lse)
 
+        # cast back to original dtype
+
+        o = o.dtype(dtype)
         return o
 
     @staticmethod
@@ -562,10 +579,13 @@ class RingFlashAttentionCUDAFunction(Function):
             max_ring_passes,
             num_lookback_buckets,
             striped_ring_attn,
-            ring_size
+            ring_size,
+            dtype
         ) = ctx.args
 
         q, k, v, o, lse = ctx.saved_tensors
+
+        device = q.device
 
         if causal:
             mask = None
@@ -579,9 +599,9 @@ class RingFlashAttentionCUDAFunction(Function):
 
         device = q.device
 
-        dq = torch.zeros_like(q)
-        dk = torch.zeros_like(k)
-        dv = torch.zeros_like(v)
+        dq = torch.zeros(q.shape, device = device, dtype = torch.float32)
+        dk = torch.zeros(k.shape, device = device, dtype = torch.float32)
+        dv = torch.zeros(v.shape, device = device, dtype = torch.float32)
 
         kv_and_dkv = torch.stack((k, v, dk, dv))
 
@@ -666,6 +686,8 @@ class RingFlashAttentionCUDAFunction(Function):
             dkv = ring_pass(ring_size - max_ring_passes + 1, dkv)
 
             dk, dv = dkv
+
+        dq, dk, dv = map(lambda t: t.to(dtype), (dq, dk, dv))
 
         return dq, dk, dv, None, None, None, None, None, None, None
 
