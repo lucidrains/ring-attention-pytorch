@@ -283,7 +283,8 @@ def _fwd_kernel(
 
     tl.store(lse_ptrs, lse_i)
 
-    tl.store(m_ptrs, m_i)
+    if not RETURN_NORMALIZED_OUTPUT:
+        tl.store(m_ptrs, m_i)
 
     # write to output
 
