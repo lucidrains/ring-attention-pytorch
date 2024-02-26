@@ -76,7 +76,7 @@ $ python assert.py
     - [x] for backwards, use Tri's flash attention kernels, accumulate dq, dk, dv across rings
     - [x] refactor to have naive ring+flash attention work with `(batch, seq, head, dim)`
     - [x] handle key padding mask for forwards by translating mask to bias
-    - [ ] figure out how Tri handles key padding mask for backwards
+    - [x] figure out how Tri handles key padding mask for backwards
     - [ ] verify backwards working in a100 colab
     - [ ] validate cuda striped ring attention works
     - [ ] use a `IS_FIRST` and `IS_LAST` boolean for the triton forward kernel, and avoid a `tl.load` at the beginning, while also scaling output with `tl.exp(m - lse)` if end
