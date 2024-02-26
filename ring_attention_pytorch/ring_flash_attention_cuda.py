@@ -37,7 +37,8 @@ assert exists(importlib.util.find_spec('flash_attn')), 'flash-attn must be insta
 assert version('flash_attn') == '2.5.1.post1'
 
 from flash_attn.flash_attn_interface import (
-    _flash_attn_varlen_backward
+    _flash_attn_varlen_backward,
+    _flash_attn_backward
 )
 
 # make sure triton is installed for forwards
@@ -566,6 +567,9 @@ class RingFlashAttentionCUDAFunction(Function):
 
         q, k, v, o, lse = ctx.saved_tensors
 
+        if causal:
+            mask = None
+
         row_length = q.shape[-2]
 
         per_machine_seq_size = k.shape[-2]
@@ -590,57 +594,64 @@ class RingFlashAttentionCUDAFunction(Function):
 
             k, v, dk, dv = kv_and_dkv
 
-            # determine whether to do causal mask or not
-            # depends on whether it is striped attention, as well as current machine rank vs ring rank
+            if causal or not exists(mask):
+                # determine whether to do causal mask or not
+                # depends on whether it is striped attention, as well as current machine rank vs ring rank
 
-            block_causal = False
+                block_causal = False
 
-            if causal:
-                if striped_ring_attn:
-                    block_causal = True
+                if causal:
+                    if striped_ring_attn:
+                        block_causal = True
 
-                    if get_rank() < ring_rank:
-                        # this is a hack that should also mask out the diagonal
-                        # https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#21-change-behavior-of-causal-flag
-                        q = pad_at_dim(q, (0, 1), dim = -3)
-                else:
-                    block_causal = get_rank() == ring_rank
+                        if get_rank() < ring_rank:
+                            # this is a hack that should also mask out the diagonal
+                            # https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#21-change-behavior-of-causal-flag
+                            q = pad_at_dim(q, (0, 1), dim = -3)
+                    else:
+                        block_causal = get_rank() == ring_rank
 
-                    if get_rank() < ring_rank:
-                        continue
+                        if get_rank() < ring_rank:
+                            continue
 
-            # translate key padding mask to bias
+                # use flash attention backwards kernel to calculate dq, dk, dv and accumulate
 
-            bias = None
+                ring_dq, ring_dk, ring_dv, *_ = _flash_attn_backward(
+                    dout = do,
+                    q = q,
+                    k = k,
+                    v = v,
+                    out = o,
+                    softmax_lse = lse,
+                    dq = torch.zeros_like(dq),
+                    dk = torch.zeros_like(dk),
+                    dv = torch.zeros_like(dv),
+                    dropout_p = 0.,
+                    softmax_scale = softmax_scale,
+                    causal = block_causal
+                )
 
-            if exists(mask):
-                bias = torch.where(mask, 0.,  max_neg_value)
+                ring_dq = ring_dq[:, :, :row_length]
 
-            # use flash attention backwards kernel to calculate dq, dk, dv and accumulate
+            else:
+                raise NotImplementedError
 
-            ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
-                dout = do,
-                q = q,
-                k = k,
-                v = v,
-                out = o,
-                softmax_lse = lse,
-                dq = torch.zeros_like(dq),
-                dk = torch.zeros_like(dk),
-                dv = torch.zeros_like(dv),
-                cu_seqlens_q = q.shape[-2],
-                cu_seqlens_k = k.shape[-2],
-                max_seqlen_q = None,
-                max_seqlen_k = None,
-                dropout_p = 0.,
-                softmax_scale = softmax_scale,
-                causal = block_causal,
-                window_size = bucket_size,
-                alibi_slopes = None,
-                deterministic = False
-            )
-
-            ring_dq = ring_dq[:, :, :row_length]
+                ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
+                    dout = do,
+                    q = q,
+                    k = k,
+                    v = v,
+                    out = o,
+                    softmax_lse = lse,
+                    dq = torch.zeros_like(dq),
+                    dk = torch.zeros_like(dk),
+                    dv = torch.zeros_like(dv),
+                    cu_seqlens_q = None,
+                    cu_seqlens_k = None,
+                    max_seqlen_q = None,
+                    max_seqlen_k = None,
+                    softmax_scale = softmax_scale
+                )
 
             dq.add_(ring_dq)
             dk.add_(ring_dk)
