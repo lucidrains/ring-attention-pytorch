@@ -74,7 +74,7 @@ $ python assert.py
 - [ ] add flash attention kernel version in the presence of cuda
     - [x] for forwards, use modified Triton flash attention forwards that outputs row sums, maxes, and exponentiated weighted sum
     - [x] for backwards, use Tri's flash attention kernels, accumulate dq, dk, dv across rings
-    - [ ] refactor to have naive ring+flash attention work with `(batch, seq, head, dim)`
+    - [x] refactor to have naive ring+flash attention work with `(batch, seq, head, dim)`
     - [ ] figure out how Tri handles key padding mask for backwards
     - [ ] verify backwards working in a100 colab
     - [ ] validate cuda striped ring attention works

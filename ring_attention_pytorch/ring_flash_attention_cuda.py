@@ -292,8 +292,6 @@ def flash_attn_forward(
     softmax_scale = None,
     causal_mask_diagonal = False
 ):
-
-    q, k, v = [rearrange(t, 'b h n d -> b n h d') for t in (q, k, v)]
     q, k, v = [x if is_contiguous(x) else x.contiguous() for x in (q, k, v)]
 
     batch, seqlen_q, nheads, d = q.shape
@@ -424,13 +422,13 @@ class RingFlashAttentionCUDAFunction(Function):
     ):
         ring_size = default(ring_size, get_world_size())
 
-        cross_attn = q.shape[-2] != k.shape[-2]
+        cross_attn = q.shape[-3] != k.shape[-3]
         ring_reduce_col &= not cross_attn
         striped_ring_attn &= not cross_attn
 
-        assert k.shape[-1] == v.shape[-1]
+        assert k.shape[-1] == v.shape[-1], 'for simplicity when doing ring passing, assume dim_values is equal to dim_queries_keys, majority of transformer do this, not a big issue'
 
-        per_machine_seq_size = k.shape[-2]
+        per_machine_seq_size = k.shape[-3]
 
         # calculate max ring passes
 
@@ -510,9 +508,8 @@ class RingFlashAttentionCUDAFunction(Function):
 
         # scale final output, taking into account running maximum and lse
 
-        o = rearrange(o, 'b n h d -> b h n d')
         o_scale = torch.exp(m - lse)
-        o.mul_(o_scale[:, None])
+        o.mul_(rearrange('b h n -> b n h 1', o_scale))
 
         ctx.args = (
             causal,
@@ -582,14 +579,12 @@ class RingFlashAttentionCUDAFunction(Function):
                     if get_rank() < ring_rank:
                         # this is a hack that should also mask out the diagonal
                         # https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#21-change-behavior-of-causal-flag
-                        q = F.pad(q, (0, 0, 0, 1), value = 0.)
+                        q = F.pad(q, (0, 0, 0, 0, 0, 1), value = 0.)
                 else:
                     block_causal = get_rank() == ring_rank
 
                     if get_rank() < ring_rank:
                         continue
-
-            q, k, v, o, do = map(lambda t: rearrange(t, 'b n h d -> b h n d'), (q, k, v, o, do))
 
             ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
                 dout = do,
@@ -628,8 +623,6 @@ class RingFlashAttentionCUDAFunction(Function):
             dkv = ring_pass(ring_size - max_ring_passes + 1, dkv)
 
             dk, dv = dkv
-
-        dq, dk, dv = map(lambda t: rearrange(t, 'b n h d -> b h n d'), (dq, dk, dv))
 
         return dq, dk, dv, None, None, None, None, None, None, None
 

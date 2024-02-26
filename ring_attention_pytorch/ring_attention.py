@@ -137,6 +137,7 @@ def rotate_half(x):
 
 @autocast(enabled = False)
 def apply_rotary_pos_emb(pos, t):
+    pos = rearrange('n d -> n 1 d', pos)
     return t * pos.cos() + rotate_half(t) * pos.sin()
 
 # batch to sequence sharding and back
@@ -337,7 +338,7 @@ class RingAttention(Module):
         device = x.device
 
         qkv = self.to_qkv(x)
-        q, k, v = rearrange('b n (qkv h d) -> qkv b h n d', qkv, qkv = 3, h = self.heads)
+        q, k, v = rearrange('b n (qkv h d) -> qkv b n h d', qkv, qkv = 3, h = self.heads)
 
         # rotary relative positions
 
@@ -366,7 +367,7 @@ class RingAttention(Module):
 
         # combine heads
 
-        out = rearrange('b h n d -> b n (h d)', out)
+        out = rearrange('b n h d -> b n (h d)', out)
         out = self.to_out(out)
 
         if auto_shard_seq:

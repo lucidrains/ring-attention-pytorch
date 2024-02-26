@@ -105,8 +105,10 @@ class RingFlashAttentionFunction(Function):
         max_neg_value = -torch.finfo(q.dtype).max
 
         o = torch.zeros_like(q)
-        all_row_sums = torch.zeros((*q.shape[:-1], 1), device = device)
-        all_row_maxes = torch.full((*q.shape[:-1], 1), max_neg_value, device = device)
+        batch, seq, heads, _ = q.shape
+
+        all_row_sums = torch.zeros((batch, heads, seq, 1), device = device)
+        all_row_maxes = torch.full((batch, heads, seq, 1), max_neg_value, device = device)
 
         scale = (q.shape[-1] ** -0.5)
 
@@ -124,8 +126,8 @@ class RingFlashAttentionFunction(Function):
             k, v = kv
 
             col_splits = zip(
-                k.split(bucket_size, dim = -2),
-                v.split(bucket_size, dim = -2),
+                k.split(bucket_size, dim = -3),
+                v.split(bucket_size, dim = -3),
                 maybe_split(mask, bucket_size, dim = -1)
             )
 
@@ -134,19 +136,19 @@ class RingFlashAttentionFunction(Function):
                 col_bucket_index = col_ring_rank * per_machine_buckets + k_ind
 
                 row_splits = zip(
-                    q.split(bucket_size, dim = -2),
-                    o.split(bucket_size, dim = -2),
+                    q.split(bucket_size, dim = -3),
+                    o.split(bucket_size, dim = -3),
                     all_row_sums.split(bucket_size, dim = -2),
                     all_row_maxes.split(bucket_size, dim = -2),
                 )
 
                 for ind, (qc, oc, row_sums, row_maxes) in enumerate(row_splits):
 
-                    qk_len_diff = kc.shape[-2] - qc.shape[-2]
+                    qk_len_diff = kc.shape[-3] - qc.shape[-3]
 
                     row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
-                    attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
+                    attn_weights = einsum('b i h d, b j h d -> b h i j', qc, kc) * scale
 
                     if exists(col_mask):
                         attn_weights = einx.where('b j, b h i j, -> b h i j', col_mask, attn_weights, max_neg_value)
@@ -159,12 +161,12 @@ class RingFlashAttentionFunction(Function):
                             # `GetMaskStripedAttention` pseudocode at end of section 2.2.1 of https://arxiv.org/abs/2311.09431
 
                             triu_offset = int(row_bucket_index >= col_bucket_index)
-                            causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(triu_offset + qk_len_diff)
+                            causal_mask = torch.ones((qc.shape[-3], kc.shape[-3]), dtype = torch.bool, device = device).triu(triu_offset + qk_len_diff)
                             attn_weights.masked_fill_(causal_mask, max_neg_value)
 
                         else:
                             if row_bucket_index == col_bucket_index:
-                                causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(1 + qk_len_diff)
+                                causal_mask = torch.ones((qc.shape[-3], kc.shape[-3]), dtype = torch.bool, device = device).triu(1 + qk_len_diff)
                                 attn_weights.masked_fill_(causal_mask, max_neg_value)
                             elif row_bucket_index < col_bucket_index:
                                 attn_weights.fill_(max_neg_value)
@@ -179,18 +181,19 @@ class RingFlashAttentionFunction(Function):
 
                     block_row_sums = exp_weights.sum(dim = -1, keepdims = True).clamp(min = EPSILON)
 
-                    exp_values = einsum('... i j, ... j d -> ... i d', exp_weights, vc)
+                    exp_values = einsum('b h i j, b j h d -> b i h d', exp_weights, vc)
 
                     exp_row_max_diff = torch.exp(row_maxes - new_row_maxes)
 
                     new_row_sums = exp_row_max_diff * row_sums + block_row_sums
 
+                    exp_row_max_diff = rearrange('b h n 1 -> b n h 1', exp_row_max_diff)
                     oc.mul_(exp_row_max_diff).add_(exp_values)
 
                     row_maxes.copy_(new_row_maxes)
                     row_sums.copy_(new_row_sums)
 
-        o.div_(all_row_sums)
+        o.div_(rearrange('b h n 1 -> b n h 1', all_row_sums))
 
         lse = all_row_sums.clamp(min = EPSILON).log() + all_row_maxes
 
@@ -245,11 +248,11 @@ class RingFlashAttentionFunction(Function):
         dv = torch.zeros_like(v)
 
         row_splits = zip(
-            q.split(bucket_size, dim = -2),
-            o.split(bucket_size, dim = -2),
-            do.split(bucket_size, dim = -2),
+            q.split(bucket_size, dim = -3),
+            o.split(bucket_size, dim = -3),
+            do.split(bucket_size, dim = -3),
             lse.split(bucket_size, dim = -2),
-            dq.split(bucket_size, dim = -2)
+            dq.split(bucket_size, dim = -3)
         )
 
         kv_and_dkv = torch.stack((k, v, dk, dv))
@@ -264,10 +267,10 @@ class RingFlashAttentionFunction(Function):
             k, v, dk, dv = kv_and_dkv
 
             col_splits = zip(
-                k.split(bucket_size, dim = -2),
-                v.split(bucket_size, dim = -2),
-                dk.split(bucket_size, dim = -2),
-                dv.split(bucket_size, dim = -2),
+                k.split(bucket_size, dim = -3),
+                v.split(bucket_size, dim = -3),
+                dk.split(bucket_size, dim = -3),
+                dv.split(bucket_size, dim = -3),
                 maybe_split(mask, bucket_size, dim = -1)
             )
 
@@ -278,9 +281,9 @@ class RingFlashAttentionFunction(Function):
                 for ind, (qc, oc, doc, lsec, dqc) in enumerate(row_splits):
                     row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
-                    qk_len_diff = kc.shape[-2] - qc.shape[-2]
+                    qk_len_diff = kc.shape[-3] - qc.shape[-3]
 
-                    attn_weights = einsum('... i d, ... j d -> ... i j', qc, kc) * scale
+                    attn_weights = einsum('b i h d, b j h d -> b h i j', qc, kc) * scale
 
                     if causal:
                         if (row_bucket_index - col_bucket_index) > num_lookback_buckets:
@@ -290,11 +293,11 @@ class RingFlashAttentionFunction(Function):
                             # `GetMaskStripedAttention` pseudocode at end of section 2.2.1 of https://arxiv.org/abs/2311.09431
 
                             triu_offset = int(row_bucket_index >= col_bucket_index)
-                            causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(triu_offset + qk_len_diff)
+                            causal_mask = torch.ones((qc.shape[-3], kc.shape[-3]), dtype = torch.bool, device = device).triu(triu_offset + qk_len_diff)
                             attn_weights.masked_fill_(causal_mask, max_neg_value)
                         else:
                             if row_bucket_index == col_bucket_index:
-                                causal_mask = torch.ones((qc.shape[-2], kc.shape[-2]), dtype = torch.bool, device = device).triu(1 + qk_len_diff)
+                                causal_mask = torch.ones((qc.shape[-3], kc.shape[-3]), dtype = torch.bool, device = device).triu(1 + qk_len_diff)
                                 attn_weights.masked_fill_(causal_mask, max_neg_value)
                             elif row_bucket_index < col_bucket_index:
                                 attn_weights.fill_(max_neg_value)
@@ -304,14 +307,15 @@ class RingFlashAttentionFunction(Function):
                     if exists(col_mask):
                         p = einx.where('b j, b h i j, -> b h i j', col_mask, p, 0.)
 
-                    dv_chunk = einsum('... i j, ... i d -> ... j d', p, doc)
-                    dp = einsum('... i d, ... j d -> ... i j', doc, vc)
+                    dv_chunk = einsum('b h i j, b i h d -> b j h d', p, doc)
+                    dp = einsum('b i h d, b j h d -> b h i j', doc, vc)
 
                     D = (doc * oc).sum(dim = -1, keepdims = True)
+                    D = rearrange('b n h 1 -> b h n 1', D)
                     ds = p * scale * (dp - D)
 
-                    dq_chunk = einsum('... i j, ... j d -> ... i d', ds, kc)
-                    dk_chunk = einsum('... i j, ... i d -> ... j d', ds, qc)
+                    dq_chunk = einsum('b h i j, b j h d -> b i h d', ds, kc)
+                    dk_chunk = einsum('b h i j, b i h d -> b j h d', ds, qc)
 
                     dqc.add_(dq_chunk)
                     dkc.add_(dk_chunk)
