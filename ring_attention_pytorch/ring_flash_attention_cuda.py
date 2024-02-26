@@ -313,10 +313,11 @@ def flash_attn_forward(
     assert q.dtype == k.dtype == v.dtype, "All tensors must have the same type"
     assert q.dtype in [torch.float16, torch.bfloat16], "Only support fp16 and bf16"
     assert q.is_cuda and k.is_cuda and v.is_cuda
+
     softmax_scale = softmax_scale or 1.0 / math.sqrt(d)
 
-    has_bias = bias is not None
-    bias_type = "none"
+    has_bias = exists(bias)
+
     if has_bias:
         assert bias.dtype in [q.dtype, torch.float]
         assert bias.is_cuda
@@ -324,7 +325,7 @@ def flash_attn_forward(
         if bias.ndim == 3:
             bias = repeat(bias, 'b j -> b h i j', h = nheads, i = seqlen_q)
 
-        if bias.stride(-1) != 1:
+        if not is_contiguous(bias):
             bias = bias.contiguous()
 
         assert bias.shape[-2:] == (1, seqlen_k)
@@ -430,6 +431,7 @@ class RingFlashAttentionCUDAFunction(Function):
         max_lookback_seq_len: Optional[int],
         ring_size: Optional[int]
     ):
+        max_neg_value = -torch.finfo(q.dtype).max
         ring_size = default(ring_size, get_world_size())
 
         cross_attn = q.shape[-3] != k.shape[-3]
@@ -489,6 +491,13 @@ class RingFlashAttentionCUDAFunction(Function):
 
             k, v = kv
 
+            # translate key padding mask to bias
+
+            bias = None
+
+            if exists(mask):
+                bias = torch.where(mask, 0.,  max_neg_value)
+
             # for non-striped attention
             # if the kv ring rank is equal to the current rank (block diagonal), then turn on causal
             # for striped attention, it is always causal, but a lt or gt sign needs to be changed to lte or gte within the cuda code, when determining masking out
@@ -512,6 +521,7 @@ class RingFlashAttentionCUDAFunction(Function):
                 o = o,
                 m = m,
                 lse = lse,
+                bias = bias,
                 softmax_scale = softmax_scale,
                 causal_mask_diagonal = causal_mask_diagonal
             )
@@ -580,6 +590,9 @@ class RingFlashAttentionCUDAFunction(Function):
 
             k, v, dk, dv = kv_and_dkv
 
+            # determine whether to do causal mask or not
+            # depends on whether it is striped attention, as well as current machine rank vs ring rank
+
             block_causal = False
 
             if causal:
@@ -595,6 +608,15 @@ class RingFlashAttentionCUDAFunction(Function):
 
                     if get_rank() < ring_rank:
                         continue
+
+            # translate key padding mask to bias
+
+            bias = None
+
+            if exists(mask):
+                bias = torch.where(mask, 0.,  max_neg_value)
+
+            # use flash attention backwards kernel to calculate dq, dk, dv and accumulate
 
             ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
                 dout = do,
