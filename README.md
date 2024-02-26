@@ -77,9 +77,10 @@ $ python assert.py
     - [x] refactor to have naive ring+flash attention work with `(batch, seq, head, dim)`
     - [x] handle key padding mask for forwards by translating mask to bias
     - [x] figure out how Tri handles key padding mask for backwards
+    - [x] scale output of flash attention forwards on the last ring pass reduce
+    - [ ] prevent an unnecessary `tl.load` on the first ring pass
     - [ ] verify backwards working in a100 colab
     - [ ] validate cuda striped ring attention works
-    - [ ] use a `IS_FIRST` and `IS_LAST` boolean for the triton forward kernel, and avoid a `tl.load` at the beginning, while also scaling output with `tl.exp(m - lse)` if end
 
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
