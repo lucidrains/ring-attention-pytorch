@@ -74,8 +74,11 @@ $ python assert.py
 - [ ] add flash attention kernel version in the presence of cuda
     - [x] for forwards, use modified Triton flash attention forwards that outputs row sums, maxes, and exponentiated weighted sum
     - [x] for backwards, use Tri's flash attention kernels, accumulate dq, dk, dv across rings
+    - [ ] refactor to have naive ring+flash attention work with `(batch, seq, head, dim)`
     - [ ] figure out how Tri handles key padding mask for backwards
     - [ ] verify backwards working in a100 colab
+    - [ ] validate cuda striped ring attention works
+    - [ ] use a `IS_FIRST` and `IS_LAST` boolean for the triton forward kernel, and avoid a `tl.load` at the beginning, while also scaling output with `tl.exp(m - lse)` if end
 
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
