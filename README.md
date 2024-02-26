@@ -72,9 +72,11 @@ $ python assert.py
 - [x] ability to have ring size < world size, sharding the batch and sequence, and doing ring reduce with the correct set of ranks
 
 - [ ] add flash attention kernel version in the presence of cuda
+    - [x] for forwards, use modified Triton flash attention forwards that outputs row sums, maxes, and exponentiated weighted sum
     - [x] for backwards, use Tri's flash attention kernels, accumulate dq, dk, dv across rings
     - [ ] figure out how Tri handles key padding mask for backwards
-    - [ ] for forwards, use modified Triton flash attention forwards that outputs row sums, maxes, and exponentiated weighted sum
+    - [ ] verify backwards working in a100 colab
+
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl

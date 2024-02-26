@@ -510,6 +510,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
         # scale final output, taking into account running maximum and lse
 
+        o = rearrange(o, 'b n h d -> b h n d')
         o_scale = torch.exp(m - lse)
         o.mul_(o_scale[:, None])
 
@@ -588,6 +589,8 @@ class RingFlashAttentionCUDAFunction(Function):
                     if get_rank() < ring_rank:
                         continue
 
+            q, k, v, o, do = map(lambda t: rearrange(t, 'b n h d -> b h n d'), (q, k, v, o, do))
+
             ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
                 dout = do,
                 q = q,
@@ -625,6 +628,8 @@ class RingFlashAttentionCUDAFunction(Function):
             dkv = ring_pass(ring_size - max_ring_passes + 1, dkv)
 
             dk, dv = dkv
+
+        dq, dk, dv = map(lambda t: rearrange(t, 'b n h d -> b h n d'), (dq, dk, dv))
 
         return dq, dk, dv, None, None, None, None, None, None, None
 
