@@ -15,6 +15,19 @@ from ring_attention_pytorch.ring import (
     get_world_size
 )
 
+# helpers
+
+def exists(v):
+    return v is not None
+
+def pad_at_dim(t, pad: Tuple[int, int], *, dim = -1, value = 0.):
+    dims_from_right = (- dim - 1) if dim < 0 else (t.ndim - dim - 1)
+    zeros = ((0, 0) * dims_from_right)
+    return F.pad(t, (*zeros, *pad), value = value)
+
+def is_contiguous(x):
+    return x.stride(-1) == 1
+
 # make sure flash attention is installed for backwards
 
 import importlib
@@ -276,9 +289,6 @@ def _fwd_kernel(
             tl.store(
                 out_ptrs, acc_o, mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim)
             )
-
-def is_contiguous(x):
-    return x.stride(-1) == 1
 
 def flash_attn_forward(
     q,
@@ -579,7 +589,7 @@ class RingFlashAttentionCUDAFunction(Function):
                     if get_rank() < ring_rank:
                         # this is a hack that should also mask out the diagonal
                         # https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#21-change-behavior-of-causal-flag
-                        q = F.pad(q, (0, 0, 0, 0, 0, 1), value = 0.)
+                        q = pad_at_dim(q, (0, 1), dim = -3)
                 else:
                     block_causal = get_rank() == ring_rank
 
