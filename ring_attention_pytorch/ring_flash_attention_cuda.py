@@ -96,6 +96,7 @@ def _fwd_kernel(
     HAS_BIAS: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
     CAUSAL_MASK_DIAGONAL: tl.constexpr,
+    RETURN_NORMALIZED_OUTPUT: tl.constexpr,
     BLOCK_HEADDIM: tl.constexpr,
     EVEN_M: tl.constexpr,
     EVEN_N: tl.constexpr,
@@ -263,14 +264,22 @@ def _fwd_kernel(
         acc_o += tl.dot(p, v)
 
         # -- update statistics
+
         m_i = m_ij
         l_i_new = tl.exp(lse_i - m_ij) + l_ij
         lse_i = m_ij + tl.log(l_i_new)
 
+    if RETURN_NORMALIZED_OUTPUT:
+        tl.store(t_ptrs, o_scale)
+        o_scale = tl.load(t_ptrs)
+        acc_o = acc_o * o_scale[:, None]
+
+    # offsets for m and lse
+
     start_m = tl.program_id(0)
     offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
 
-    # write back l and m
+    # write back lse and m
 
     tl.store(lse_ptrs, lse_i)
 
@@ -301,7 +310,8 @@ def flash_attn_forward(
     m = None,
     lse = None,
     softmax_scale = None,
-    causal_mask_diagonal = False
+    causal_mask_diagonal = False,
+    return_normalized_output = False
 ):
     q, k, v = [x if is_contiguous(x) else x.contiguous() for x in (q, k, v)]
 
@@ -387,6 +397,7 @@ def flash_attn_forward(
         has_bias,
         causal,
         causal_mask_diagonal,
+        return_normalized_output,
         BLOCK_HEADDIM,
         BLOCK_M = BLOCK,
         BLOCK_N = BLOCK,
@@ -501,7 +512,7 @@ class RingFlashAttentionCUDAFunction(Function):
         receive_kv = None
         receive_mask = None
 
-        for ring_rank, ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
+        for (ring_rank, is_last), ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             k, v = kv
 
@@ -537,13 +548,9 @@ class RingFlashAttentionCUDAFunction(Function):
                 lse = lse,
                 bias = bias,
                 softmax_scale = softmax_scale,
-                causal_mask_diagonal = causal_mask_diagonal
+                causal_mask_diagonal = causal_mask_diagonal,
+                return_normalized_output = is_last
             )
-
-        # scale final output, taking into account running maximum and lse
-
-        o_scale = torch.exp(m - lse)
-        o.mul_(rearrange('b h n -> b n h 1', o_scale))
 
         ctx.args = (
             causal,
@@ -610,7 +617,7 @@ class RingFlashAttentionCUDAFunction(Function):
         receive_kv_and_dkv = None
         receive_mask = None
 
-        for ring_rank, ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
+        for (ring_rank, is_last), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             k, v, dk, dv = kv_and_dkv
 

@@ -121,7 +121,7 @@ class RingFlashAttentionFunction(Function):
         receive_kv = None
         receive_mask = None
 
-        for ring_rank, ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
+        for (ring_rank, is_last), ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             k, v = kv
 
@@ -262,7 +262,7 @@ class RingFlashAttentionFunction(Function):
         receive_kv_and_dkv = None
         receive_mask = None
 
-        for ring_rank, ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
+        for (ring_rank, is_last), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             k, v, dk, dv = kv_and_dkv
 
