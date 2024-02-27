@@ -562,7 +562,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
         # cast back to original dtype
 
-        o = o.dtype(dtype)
+        o = o.type(dtype)
         return o
 
     @staticmethod
@@ -614,6 +614,11 @@ class RingFlashAttentionCUDAFunction(Function):
 
             k, v, dk, dv = kv_and_dkv
 
+            dtype = q.dtype
+
+            k = k.type(dtype)
+            v = v.type(dtype)
+
             if causal or not exists(mask):
                 # determine whether to do causal mask or not
                 # depends on whether it is striped attention, as well as current machine rank vs ring rank
@@ -643,12 +648,15 @@ class RingFlashAttentionCUDAFunction(Function):
                     v = v,
                     out = o,
                     softmax_lse = lse,
-                    dq = torch.zeros_like(dq),
-                    dk = torch.zeros_like(dk),
-                    dv = torch.zeros_like(dv),
+                    dq = torch.zeros_like(q),
+                    dk = torch.zeros_like(k),
+                    dv = torch.zeros_like(v),
                     dropout_p = 0.,
                     softmax_scale = softmax_scale,
-                    causal = block_causal
+                    causal = block_causal,
+                    window_size = (-1, 1),
+                    alibi_slopes = None,
+                    deterministic = False
                 )
 
                 ring_dq = ring_dq[:, :, :row_length]
@@ -663,14 +671,17 @@ class RingFlashAttentionCUDAFunction(Function):
                     v = v,
                     out = o,
                     softmax_lse = lse,
-                    dq = torch.zeros_like(dq),
-                    dk = torch.zeros_like(dk),
-                    dv = torch.zeros_like(dv),
+                    dq = torch.zeros_like(q),
+                    dk = torch.zeros_like(k),
+                    dv = torch.zeros_like(v),
                     cu_seqlens_q = None,
                     cu_seqlens_k = None,
                     max_seqlen_q = None,
                     max_seqlen_k = None,
-                    softmax_scale = softmax_scale
+                    softmax_scale = softmax_scale,
+                    window_size = (-1, 1),
+                    alibi_slopes = None,
+                    deterministic = False
                 )
 
             dq.add_(ring_dq)
