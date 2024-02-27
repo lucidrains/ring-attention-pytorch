@@ -603,7 +603,16 @@ class RingFlashAttentionCUDAFunction(Function):
         dk = torch.zeros(k.shape, device = device, dtype = torch.float32)
         dv = torch.zeros(v.shape, device = device, dtype = torch.float32)
 
-        kv_and_dkv = torch.stack((k, v, dk, dv))
+        # k and v will have 16 bits, while dk, dv needs to be kept at 32
+        # view everything as int for ring passing
+        # for minimizing communication
+
+        k_dtype, v_dtype = k.dtype, v.dtype
+
+        k, v, dk, dv = map(lambda t: t.view(torch.int), (k, v, dk, dv))
+        kv = torch.cat((k, v), dim = -1)
+
+        kv_and_dkv = torch.stack((kv, dk, dv))
 
         # receive buffers, to be alternated with sent buffer
 
@@ -612,16 +621,19 @@ class RingFlashAttentionCUDAFunction(Function):
 
         for (ring_rank, is_last), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
-            k, v, dk, dv = kv_and_dkv
+            kv, dk, dv = kv_and_dkv
 
-            dtype = q.dtype
+            # reconstitute correct types for k, v, dk, dv
 
-            k = k.type(dtype)
-            v = v.type(dtype)
+            k, v = kv.chunk(2, dim = -1)
+            k, v = k.view(k_dtype), v.view(v_dtype)
+            dk = dk.view(torch.float32)
+            dv = dv.view(torch.float32)
+
+            # determine whether to do causal mask or not
+            # depends on whether it is striped attention, as well as current machine rank vs ring rank
 
             if causal or not exists(mask):
-                # determine whether to do causal mask or not
-                # depends on whether it is striped attention, as well as current machine rank vs ring rank
 
                 block_causal = False
 
@@ -688,6 +700,8 @@ class RingFlashAttentionCUDAFunction(Function):
             dk.add_(ring_dk)
             dv.add_(ring_dv)
 
+            dk, dv = map(lambda t: t.type(torch.int), (dk, dv))
+
             if not ring_reduce_col:
                 continue
 
@@ -698,6 +712,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
             dk, dv = dkv
 
+        dk, dv = map(lambda t: t.view(torch.float32), (dk, dv))
         dq, dk, dv = map(lambda t: t.to(dtype), (dq, dk, dv))
 
         return dq, dk, dv, None, None, None, None, None, None, None
