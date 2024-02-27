@@ -46,8 +46,7 @@ from flash_attn.flash_attn_interface import (
 
 # make sure triton is installed for forwards
 
-assert exists(importlib.util.find_spec('triton')), 'specific version of triton must be installed. `pip install triton==2.0.0.dev20221202` first'
-assert version('triton') == '2.0.0.dev20221202'
+assert exists(importlib.util.find_spec('triton')), 'specific version of triton must be installed. `pip install triton==2.1.0` first'
 
 import triton
 import triton.language as tl
@@ -207,7 +206,7 @@ def _fwd_kernel(
                     other=0.0,
                 )
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
-        qk += tl.dot(q, k, trans_b=True)
+        qk += tl.dot(q, tl.trans(k))
 
         if not EVEN_N:
             qk += tl.where((start_n + offs_n)[None, :] < seqlen_k, 0, float("-inf"))
@@ -273,8 +272,7 @@ def _fwd_kernel(
         lse_i = m_ij + tl.log(l_i_new)
 
     if RETURN_NORMALIZED_OUTPUT:
-        tl.store(t_ptrs, o_scale)
-        o_scale = tl.load(t_ptrs)
+        o_scale = tl.exp(m_i - lse_i)
         acc_o = acc_o * o_scale[:, None]
 
     # offsets for m and lse
