@@ -590,9 +590,9 @@ class RingFlashAttentionCUDAFunction(Function):
         if causal:
             mask = None
 
-        row_length = q.shape[-2]
+        row_length = q.shape[-3]
 
-        per_machine_seq_size = k.shape[-2]
+        per_machine_seq_size = k.shape[-3]
         per_machine_buckets = per_machine_seq_size // bucket_size
 
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
@@ -659,7 +659,7 @@ class RingFlashAttentionCUDAFunction(Function):
                     deterministic = False
                 )
 
-                ring_dq = ring_dq[:, :, :row_length]
+                ring_dq = ring_dq[:, :row_length]
 
             else:
                 raise NotImplementedError
