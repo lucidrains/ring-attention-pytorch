@@ -329,7 +329,7 @@ def flash_attn_forward(
         assert bias.dtype in [q.dtype, torch.float]
         assert bias.is_cuda
 
-        if bias.ndim == 3:
+        if bias.ndim == 2:
             bias = repeat(bias, 'b j -> b h i j', h = nheads, i = seqlen_q)
 
         if not is_contiguous(bias):
