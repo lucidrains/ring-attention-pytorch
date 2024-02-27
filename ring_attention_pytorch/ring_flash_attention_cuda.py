@@ -1,5 +1,6 @@
 import math
-from typing import Optional
+from typing import Optional, Tuple
+import packaging.version as pkg_version
 
 import torch
 from torch import nn, einsum, Tensor
@@ -33,8 +34,10 @@ def is_contiguous(x):
 import importlib
 from importlib.metadata import version
 
-assert exists(importlib.util.find_spec('flash_attn')), 'flash-attn must be installed. `pip install flash-attn==2.5.1.post1 --no-build-isolation` first'
-assert version('flash_attn') == '2.5.1.post1'
+assert exists(importlib.util.find_spec('flash_attn')), 'flash-attn must be installed. `pip install flash-attn --no-build-isolation` first'
+
+flash_attn_version = version('flash_attn')
+assert pkg_version.parse(flash_attn_version) >= pkg_version.parse('2.5.1')
 
 from flash_attn.flash_attn_interface import (
     _flash_attn_varlen_backward,
