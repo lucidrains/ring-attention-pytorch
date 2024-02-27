@@ -127,8 +127,6 @@ def _fwd_kernel(
     if HAS_BIAS:
         b_ptrs = Bias + off_b * stride_bb + off_h * stride_bh + offs_n
 
-    t_ptrs = TMP + off_hb * seqlen_q_rounded + offs_m
-
     # maximum
 
     m_ptrs = M + off_hb * seqlen_q_rounded + offs_m
