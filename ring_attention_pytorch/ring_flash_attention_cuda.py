@@ -629,7 +629,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
         k_dtype, v_dtype = k.dtype, v.dtype
 
-        k, v, dk, dv = map(lambda t: t.view(torch.int), (k, v, dk, dv))
+        k, v = map(lambda t: t.view(torch.float32), (k, v))
         kv = torch.cat((k, v), dim = -1)
 
         kv_and_dkv = torch.stack((kv, dk, dv))
@@ -647,8 +647,6 @@ class RingFlashAttentionCUDAFunction(Function):
 
             k, v = kv.chunk(2, dim = -1)
             k, v = k.view(k_dtype), v.view(v_dtype)
-            dk = dk.view(torch.float32)
-            dv = dv.view(torch.float32)
 
             # determine whether to do causal mask or not
             # depends on whether it is striped attention, as well as current machine rank vs ring rank
@@ -720,8 +718,6 @@ class RingFlashAttentionCUDAFunction(Function):
             dk.add_(ring_dk)
             dv.add_(ring_dv)
 
-            dk, dv = map(lambda t: t.type(torch.int), (dk, dv))
-
             if not ring_reduce_col:
                 continue
 
@@ -732,7 +728,6 @@ class RingFlashAttentionCUDAFunction(Function):
 
             dk, dv = dkv
 
-        dk, dv = map(lambda t: t.view(torch.float32), (dk, dv))
         dq, dk, dv = map(lambda t: t.to(dtype), (dq, dk, dv))
 
         return dq, dk, dv, None, None, None, None, None, None, None
