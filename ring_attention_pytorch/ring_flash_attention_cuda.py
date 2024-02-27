@@ -46,7 +46,10 @@ from flash_attn.flash_attn_interface import (
 
 # make sure triton is installed for forwards
 
-assert exists(importlib.util.find_spec('triton')), 'specific version of triton must be installed. `pip install triton -U` first'
+assert exists(importlib.util.find_spec('triton')), 'latest triton must be installed. `pip install triton -U` first'
+
+triton_version = version('triton')
+assert pkg_version.parse(triton_version) >= pkg_version.parse('2.1')
 
 import triton
 import triton.language as tl
