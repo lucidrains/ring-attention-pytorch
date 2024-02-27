@@ -420,8 +420,6 @@ def flash_attn_forward(
 
 # helper functions
 
-EPSILON = 1e-10
-
 def exists(val):
     return val is not None
 
