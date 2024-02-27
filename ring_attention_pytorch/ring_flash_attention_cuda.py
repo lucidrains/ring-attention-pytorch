@@ -71,7 +71,6 @@ def _fwd_kernel(
     Out,
     M,
     Lse,
-    TMP,
     softmax_scale,
     stride_qb,
     stride_qh,
@@ -238,9 +237,6 @@ def _fwd_kernel(
         l_ij = tl.sum(p, 1)
 
         acc_o_scale = tl.exp(m_i - m_ij)
-
-        tl.store(t_ptrs, acc_o_scale)
-        acc_o_scale = tl.load(t_ptrs)
         acc_o = acc_o * acc_o_scale[:, None]
 
         if EVEN_N & EVEN_M:
@@ -272,8 +268,8 @@ def _fwd_kernel(
         lse_i = m_ij + tl.log(l_i_new)
 
     if RETURN_NORMALIZED_OUTPUT:
-        o_scale = tl.exp(m_i - lse_i)
-        acc_o = acc_o * o_scale[:, None]
+        acc_o_scale = tl.exp(m_i - lse_i)
+        acc_o = acc_o * acc_o_scale[:, None]
 
     # offsets for m and lse
 
@@ -359,8 +355,6 @@ def flash_attn_forward(
     if not exists(o):
         o = torch.zeros_like(q)
 
-    tmp = torch.empty((batch, nheads, seqlen_q_rounded), device=q.device, dtype=torch.float32)
-
     BLOCK_HEADDIM = max(triton.next_power_of_2(d), 16)
     BLOCK = 128
     num_warps = 4 if d <= 64 else 8
@@ -374,7 +368,6 @@ def flash_attn_forward(
         o,
         m,
         lse,
-        tmp,
         softmax_scale,
         q.stride(0),
         q.stride(2),
