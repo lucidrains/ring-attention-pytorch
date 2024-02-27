@@ -97,6 +97,7 @@ def _fwd_kernel(
     HAS_BIAS: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
     CAUSAL_MASK_DIAGONAL: tl.constexpr,
+    LOAD_ACCUMULATED: tl.constexpr,
     RETURN_NORMALIZED_OUTPUT: tl.constexpr,
     BLOCK_HEADDIM: tl.constexpr,
     EVEN_M: tl.constexpr,
@@ -131,13 +132,19 @@ def _fwd_kernel(
 
     m_ptrs = M + off_hb * seqlen_q_rounded + offs_m
 
-    m_i = tl.load(m_ptrs)
+    if LOAD_ACCUMULATED:
+        m_i = tl.load(m_ptrs)
+    else:
+        m_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
 
     # load lse
 
     lse_ptrs = Lse + off_hb * seqlen_q_rounded + offs_m
 
-    lse_i = tl.load(lse_ptrs)
+    if LOAD_ACCUMULATED:
+        lse_i = tl.load(lse_ptrs)
+    else:
+        lse_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
 
     # load accumualted output
 
@@ -150,20 +157,23 @@ def _fwd_kernel(
         + (offs_m[:, None] * stride_om + offs_d[None, :])
     )
 
-    if EVEN_M:
-        if EVEN_HEADDIM:
-            acc_o = tl.load(out_ptrs)
+    if LOAD_ACCUMULATED:
+        if EVEN_M:
+            if EVEN_HEADDIM:
+                acc_o = tl.load(out_ptrs)
+            else:
+                acc_o = tl.load(out_ptrs, mask=offs_d[None, :] < headdim)
         else:
-            acc_o = tl.load(out_ptrs, mask=offs_d[None, :] < headdim)
-    else:
-        if EVEN_HEADDIM:
-            acc_o = tl.load(out_ptrs, mask=offs_m[:, None] < seqlen_q)
-        else:
-            acc_o = tl.load(
-                out_ptrs, mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim)
-            )
+            if EVEN_HEADDIM:
+                acc_o = tl.load(out_ptrs, mask=offs_m[:, None] < seqlen_q)
+            else:
+                acc_o = tl.load(
+                    out_ptrs, mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim)
+                )
 
-    acc_o = acc_o.to(tl.float32)
+        acc_o = acc_o.to(tl.float32)
+    else:
+        acc_o = tl.zeros([BLOCK_M, BLOCK_HEADDIM], dtype=tl.float32)
 
     # load queries, keys, values
 
@@ -307,7 +317,8 @@ def flash_attn_forward(
     lse = None,
     softmax_scale = None,
     causal_mask_diagonal = False,
-    return_normalized_output = False
+    return_normalized_output = False,
+    load_accumulated = True
 ):
     q, k, v = [x if is_contiguous(x) else x.contiguous() for x in (q, k, v)]
 
@@ -344,14 +355,17 @@ def flash_attn_forward(
 
     if not exists(lse):
         max_neg_value = -torch.finfo(torch.float32).max
-        lse = torch.full((batch, nheads, seqlen_q_rounded), max_neg_value, device=q.device, dtype=torch.float32)
+        init_fn = partial(torch.full, fill_value = max_neg_value) if load_accumulated else torch.empty
+        lse = init_fn((batch, nheads, seqlen_q_rounded), device=q.device, dtype=torch.float32)
 
     if not exists(m):
         max_neg_value = -torch.finfo(torch.float32).max
-        m = torch.full((batch, nheads, seqlen_q_rounded), max_neg_value, device=q.device, dtype=torch.float32)
+        init_fn = partial(torch.full, fill_value = max_neg_value) if load_accumulated else torch.empty
+        m = init_fn((batch, nheads, seqlen_q_rounded), device=q.device, dtype=torch.float32)
 
     if not exists(o):
-        o = torch.zeros_like(q)
+        init_fn = torch.zeros_like if load_accumulated else torch.empty_like
+        o = init_fn(q)
 
     BLOCK_HEADDIM = max(triton.next_power_of_2(d), 16)
     BLOCK = 128
@@ -390,6 +404,7 @@ def flash_attn_forward(
         has_bias,
         causal,
         causal_mask_diagonal,
+        load_accumulated,
         return_normalized_output,
         BLOCK_HEADDIM,
         BLOCK_M = BLOCK,
@@ -506,6 +521,7 @@ class RingFlashAttentionCUDAFunction(Function):
         receive_mask = None
 
         for (ring_rank, is_last), ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
+            is_first = ring_rank == get_rank()
 
             k, v = kv
 
@@ -542,7 +558,8 @@ class RingFlashAttentionCUDAFunction(Function):
                 bias = bias,
                 softmax_scale = softmax_scale,
                 causal_mask_diagonal = causal_mask_diagonal,
-                return_normalized_output = is_last
+                return_normalized_output = is_last,
+                load_accumulated = not is_first
             )
 
         ctx.args = (
