@@ -45,7 +45,7 @@ def default_attention(
     q: Tensor,
     k: Tensor,
     v: Tensor,
-    mask: Optional[Tensor],
+    mask: Optional[Tensor] = None,
     causal: bool = False
 ):
     q = q * (q.shape[-1] ** 0.5)
@@ -72,7 +72,7 @@ def default_attention(
 
     # aggregate
 
-    out = einsum('b h i j, b j h d -> b i d', attn, v)
+    out = einsum('b h i j, b j h d -> b i h d', attn, v)
 
     return out
 
