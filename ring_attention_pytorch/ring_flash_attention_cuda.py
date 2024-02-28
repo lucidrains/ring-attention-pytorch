@@ -16,6 +16,8 @@ from ring_attention_pytorch.ring import (
     get_world_size
 )
 
+from beartype import beartype
+
 # helpers
 
 def exists(v):
@@ -732,4 +734,20 @@ class RingFlashAttentionCUDAFunction(Function):
 
         return dq, dk, dv, None, None, None, None, None, None, None
 
-ring_flash_attn_cuda = RingFlashAttentionCUDAFunction.apply
+ring_flash_attn_cuda_ = RingFlashAttentionCUDAFunction.apply
+
+@beartype
+def ring_flash_attn_cuda(
+    q: Tensor,
+    k: Tensor,
+    v: Tensor,
+    mask: Optional[Tensor] = None,
+    causal: bool = False,
+    bucket_size: int = 1024,
+    ring_reduce_col: bool = False,
+    striped_ring_attn: bool = False,
+    max_lookback_seq_len: Optional[int] = None,
+    ring_size: Optional[int] = None
+):
+    return ring_flash_attn_cuda_(q, k, v, mask, causal, bucket_size, ring_reduce_col, striped_ring_attn, max_lookback_seq_len, ring_size)
+
