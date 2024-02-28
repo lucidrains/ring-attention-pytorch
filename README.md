@@ -88,6 +88,7 @@ $ python assert.py
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 - [ ] `batch_isend_irecv` in the presence of key padding mask needing ring exchange, but not a big priority
 - [ ] figure out how to pytest distributed pytorch
+- [ ] use sdp context manager to validate when it is possible to use `ring_flash_attn_cuda`, otherwise assert out
 
 ## Citations
 
