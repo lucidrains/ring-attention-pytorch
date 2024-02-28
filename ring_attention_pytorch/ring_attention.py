@@ -48,7 +48,7 @@ def default_attention(
     mask: Optional[Tensor] = None,
     causal: bool = False
 ):
-    q = q * (q.shape[-1] ** 0.5)
+    q = q * (q.shape[-1] ** -0.5)
 
     mask_value = -torch.finfo(q.dtype).max
 
