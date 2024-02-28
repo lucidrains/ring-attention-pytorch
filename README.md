@@ -1,6 +1,6 @@
 <img src="./ring.png" width="450px"></img>
 
-## Ring Attention - Pytorch (wip)
+## Ring Attention - Pytorch
 
 Explorations into <a href="https://arxiv.org/abs/2310.01889">Ring Attention</a>, from <a href="https://www.haoliu.site/">Liu</a> et al. at Berkeley AI.
 
@@ -70,8 +70,7 @@ $ python assert.py
 - [x] when doing ring passes, alternate between designated send and receive buffers
 - [x] instead of max ring passes, able to specify lookback in terms of sequence length, and derive number of flash attention bucket + ring passes from that
 - [x] ability to have ring size < world size, sharding the batch and sequence, and doing ring reduce with the correct set of ranks
-
-- [ ] add flash attention kernel version in the presence of cuda
+- [x] add flash attention kernel version in the presence of cuda
     - [x] for forwards, use modified Triton flash attention forwards that outputs row sums, maxes, and exponentiated weighted sum
     - [x] for backwards, use Tri's flash attention kernels, accumulate dq, dk, dv across rings
     - [x] refactor to have naive ring+flash attention work with `(batch, seq, head, dim)`
@@ -81,9 +80,9 @@ $ python assert.py
     - [x] verify backwards working in a100 runpod
     - [x] dk, dv needs to be float32, while kv needs to be float16. see if both can be cast to int before stacked and ring passed all in one go, then reinterpret back to float32 and float16
     - [x] prevent an unnecessary `tl.load` on the first ring pass
-    - [ ] validate cuda striped ring attention works
-    - [ ] verify gradients is equal between naive and cuda
+    - [x] verify gradients is equal between naive and cuda
 
+- [ ] validate cuda striped ring attention works
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl

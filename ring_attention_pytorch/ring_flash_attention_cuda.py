@@ -462,7 +462,7 @@ class RingFlashAttentionCUDAFunction(Function):
         if k.dtype == torch.float32:
             k = k.half()
 
-        if q.dtype == torch.float32:
+        if v.dtype == torch.float32:
             v = v.half()
 
         max_neg_value = -torch.finfo(dtype).max
