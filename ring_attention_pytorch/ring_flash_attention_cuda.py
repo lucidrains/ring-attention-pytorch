@@ -603,6 +603,8 @@ class RingFlashAttentionCUDAFunction(Function):
 
         q, k, v, o, lse = ctx.saved_tensors
 
+        do = do.type(o.dtype)
+
         device = q.device
 
         if causal:
