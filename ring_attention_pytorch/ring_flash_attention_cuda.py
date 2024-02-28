@@ -724,7 +724,7 @@ class RingFlashAttentionCUDAFunction(Function):
             if not ring_reduce_col:
                 continue
 
-            dkv = kv_and_dkv[2:]
+            dkv = kv_and_dkv[1:]
 
             max_ring_passes = default(max_ring_passes, ring_size)
             dkv = ring_pass(ring_size - max_ring_passes + 1, dkv)
