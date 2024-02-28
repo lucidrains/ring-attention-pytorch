@@ -1,6 +1,6 @@
 <img src="./ring.png" width="450px"></img>
 
-## Ring Attention - Pytorch
+## Ring Attention - Pytorch (wip)
 
 Explorations into <a href="https://arxiv.org/abs/2310.01889">Ring Attention</a>, from <a href="https://www.haoliu.site/">Liu</a> et al. at Berkeley AI.
 
@@ -80,8 +80,8 @@ $ python assert.py
     - [x] verify backwards working in a100 runpod
     - [x] dk, dv needs to be float32, while kv needs to be float16. see if both can be cast to int before stacked and ring passed all in one go, then reinterpret back to float32 and float16
     - [x] prevent an unnecessary `tl.load` on the first ring pass
-    - [x] verify gradients is equal between naive and cuda
 
+- [ ] cuda backwards pass must have same dq, dk, dv as naive
 - [ ] validate cuda striped ring attention works
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training

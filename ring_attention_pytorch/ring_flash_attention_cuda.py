@@ -686,7 +686,7 @@ class RingFlashAttentionCUDAFunction(Function):
                     dropout_p = 0.,
                     softmax_scale = softmax_scale,
                     causal = block_causal,
-                    window_size = (-1, 1),
+                    window_size = (-1, -1),
                     alibi_slopes = None,
                     deterministic = False
                 )
@@ -711,7 +711,8 @@ class RingFlashAttentionCUDAFunction(Function):
                     max_seqlen_q = None,
                     max_seqlen_k = None,
                     softmax_scale = softmax_scale,
-                    window_size = (-1, 1),
+                    causal = False,
+                    window_size = (-1, -1),
                     alibi_slopes = None,
                     deterministic = False
                 )
