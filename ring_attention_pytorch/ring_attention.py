@@ -231,7 +231,7 @@ def sharded_seq_to_sharded_batch(
 
     logits = logits.split(sizes.tolist(), dim = 0)
 
-    logits = split_by_rank(logits)
+    logits, _ = split_by_rank(logits)
 
     return logits
 
@@ -594,7 +594,7 @@ class RingTransformer(Module):
         if not auto_shard_seq:
             return logits
 
-        logits, _ = sharded_seq_to_sharded_batch(logits, batch_sizes, num_sharded_batches)
+        logits = sharded_seq_to_sharded_batch(logits, batch_sizes, num_sharded_batches)
 
         if self.striped_ring_attn:
             logits = rearrange('b (i j) d -> b (j i) d', logits, j = self.bucket_size)

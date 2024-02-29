@@ -84,25 +84,14 @@ class AllGather(Module):
     def forward(self, x, sizes = None):
         return AllGatherFunction.apply(x, self.dim, sizes)
 
-class SplitByRankFunction(Function):
-    @staticmethod
-    def forward(ctx, x):
-        rank = dist.get_rank()
-        out = x[rank]
+def split_by_rank(x):
+    rank = dist.get_rank()
+    out = x[rank]
 
-        if isinstance(x, tuple):
-            sizes = tuple(map(lambda t: t.shape[0], x))
-        else:
-            sizes = (x.shape[1],) * x.shape[0]
+    if isinstance(x, tuple):
+        sizes = tuple(map(lambda t: t.shape[0], x))
+    else:
+        sizes = (x.shape[1],) * x.shape[0]
 
-        sizes = torch.tensor(sizes, device = out.device, dtype = torch.long)
-        ctx.sizes = sizes
-        return out, sizes
-
-    @staticmethod
-    def backward(ctx, grads, _):
-        grads = grads[None, ...]
-        grads = all_gather_variable_dim(grads, sizes = ctx.sizes)
-        return grads
-
-split_by_rank = SplitByRankFunction.apply
+    sizes = torch.tensor(sizes, device = out.device, dtype = torch.long)
+    return out, sizes
