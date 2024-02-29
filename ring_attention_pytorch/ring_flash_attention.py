@@ -236,7 +236,7 @@ class RingFlashAttentionFunction(Function):
 
         row_ring_rank = (get_rank() % ring_size) if ring_reduce_col else 0
 
-        per_machine_seq_size = k.shape[-2]
+        per_machine_seq_size = k.shape[-3]
         per_machine_buckets = per_machine_seq_size // bucket_size
 
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
