@@ -337,7 +337,7 @@ def flash_attn_forward(
     assert q.dtype in [torch.float16, torch.bfloat16], "Only support fp16 and bf16"
     assert q.is_cuda and k.is_cuda and v.is_cuda
 
-    softmax_scale = softmax_scale or 1.0 / math.sqrt(d)
+    softmax_scale = default(softmax_scale, d ** -0.5)
 
     has_bias = exists(bias)
 
@@ -418,7 +418,7 @@ def flash_attn_forward(
         num_stages = 1,
     )
 
-    return o, m, lse, softmax_scale
+    return o, m, lse
 
 # helper functions
 
@@ -457,6 +457,7 @@ class RingFlashAttentionCUDAFunction(Function):
         assert all([t.is_cuda for t in (q, k, v)]), 'inputs must be all on cuda'
 
         dtype = q.dtype
+        softmax_scale = q.shape[-1] ** -0.5
 
         if q.dtype == torch.float32:
             q = q.half()
@@ -511,12 +512,10 @@ class RingFlashAttentionCUDAFunction(Function):
         # o - output
         # m - maximum
         # lse - logsumexp
-        # softmax_scale - scale changes as it is being reduced in new flash attention, do not totally understand the need for this just yet
 
         o = None
         m = None
         lse = None
-        softmax_scale = None
 
         # receive buffers, to be alternated with sent buffer
 
@@ -552,7 +551,7 @@ class RingFlashAttentionCUDAFunction(Function):
                     if get_rank() < ring_rank:
                         continue
 
-            o, m, lse, softmax_scale = flash_attn_forward(
+            o, m, lse = flash_attn_forward(
                 q, k, v,
                 causal = block_causal,
                 o = o,
