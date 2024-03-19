@@ -15,7 +15,7 @@ from ring_attention_pytorch.ring import (
     null_ring_pass,
     one_ring_pass,
     get_rank,
-    get_world_size,
+    get_world_size
 )
 
 from beartype import beartype
@@ -24,46 +24,38 @@ from einops import repeat
 
 # helpers
 
-
 def exists(v):
     return v is not None
 
-
-def pad_at_dim(t, pad: Tuple[int, int], *, dim=-1, value=0.0):
-    dims_from_right = (-dim - 1) if dim < 0 else (t.ndim - dim - 1)
-    zeros = (0, 0) * dims_from_right
-    return F.pad(t, (*zeros, *pad), value=value)
-
+def pad_at_dim(t, pad: Tuple[int, int], *, dim = -1, value = 0.):
+    dims_from_right = (- dim - 1) if dim < 0 else (t.ndim - dim - 1)
+    zeros = ((0, 0) * dims_from_right)
+    return F.pad(t, (*zeros, *pad), value = value)
 
 def is_contiguous(x):
     return x.stride(-1) == 1
-
 
 # make sure flash attention is installed for backwards
 
 import importlib
 from importlib.metadata import version
 
-assert exists(
-    importlib.util.find_spec("flash_attn")
-), "flash-attn must be installed. `pip install flash-attn --no-build-isolation` first"
+assert exists(importlib.util.find_spec('flash_attn')), 'flash-attn must be installed. `pip install flash-attn --no-build-isolation` first'
 
-flash_attn_version = version("flash_attn")
-assert pkg_version.parse(flash_attn_version) >= pkg_version.parse("2.5.1")
+flash_attn_version = version('flash_attn')
+assert pkg_version.parse(flash_attn_version) >= pkg_version.parse('2.5.1')
 
 from flash_attn.flash_attn_interface import (
     _flash_attn_varlen_backward,
-    _flash_attn_backward,
+    _flash_attn_backward
 )
 
 # make sure triton is installed for forwards
 
-assert exists(
-    importlib.util.find_spec("triton")
-), "latest triton must be installed. `pip install triton -U` first"
+assert exists(importlib.util.find_spec('triton')), 'latest triton must be installed. `pip install triton -U` first'
 
-triton_version = version("triton")
-assert pkg_version.parse(triton_version) >= pkg_version.parse("2.1")
+triton_version = version('triton')
+assert pkg_version.parse(triton_version) >= pkg_version.parse('2.1')
 
 import triton
 import triton.language as tl
@@ -71,7 +63,6 @@ import triton.language as tl
 # taking the flash attention forwards from Tri's flash_attn repository
 # https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/flash_attn_triton.py
 # and modifying to return unnormalized accumulation, row maxes, row lse - reduced over passed rings
-
 
 @triton.heuristics(
     {
@@ -134,22 +125,13 @@ def _fwd_kernel(
     offs_d = tl.arange(0, BLOCK_HEADDIM)
 
     q_ptrs = (
-        Q
-        + off_b * stride_qb
-        + off_h * stride_qh
-        + (offs_m[:, None] * stride_qm + offs_d[None, :])
+        Q + off_b * stride_qb + off_h * stride_qh + (offs_m[:, None] * stride_qm + offs_d[None, :])
     )
     k_ptrs = (
-        K
-        + off_b * stride_kb
-        + off_h * stride_kh
-        + (offs_n[:, None] * stride_kn + offs_d[None, :])
+        K + off_b * stride_kb + off_h * stride_kh + (offs_n[:, None] * stride_kn + offs_d[None, :])
     )
     v_ptrs = (
-        V
-        + off_b * stride_vb
-        + off_h * stride_vh
-        + (offs_n[:, None] * stride_vn + offs_d[None, :])
+        V + off_b * stride_vb + off_h * stride_vh + (offs_n[:, None] * stride_vn + offs_d[None, :])
     )
 
     if HAS_BIAS:
@@ -195,8 +177,7 @@ def _fwd_kernel(
                 acc_o = tl.load(out_ptrs, mask=offs_m[:, None] < seqlen_q)
             else:
                 acc_o = tl.load(
-                    out_ptrs,
-                    mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim),
+                    out_ptrs, mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim)
                 )
 
         acc_o = acc_o.to(tl.float32)
@@ -215,9 +196,7 @@ def _fwd_kernel(
             q = tl.load(q_ptrs, mask=offs_m[:, None] < seqlen_q, other=0.0)
         else:
             q = tl.load(
-                q_ptrs,
-                mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim),
-                other=0.0,
+                q_ptrs, mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim), other=0.0
             )
 
     end_n = seqlen_k if not IS_CAUSAL else tl.minimum((start_m + 1) * BLOCK_M, seqlen_k)
@@ -228,11 +207,7 @@ def _fwd_kernel(
             if EVEN_HEADDIM:
                 k = tl.load(k_ptrs + start_n * stride_kn)
             else:
-                k = tl.load(
-                    k_ptrs + start_n * stride_kn,
-                    mask=offs_d[None, :] < headdim,
-                    other=0.0,
-                )
+                k = tl.load(k_ptrs + start_n * stride_kn, mask=offs_d[None, :] < headdim, other=0.0)
         else:
             if EVEN_HEADDIM:
                 k = tl.load(
@@ -243,8 +218,7 @@ def _fwd_kernel(
             else:
                 k = tl.load(
                     k_ptrs + start_n * stride_kn,
-                    mask=((start_n + offs_n)[:, None] < seqlen_k)
-                    & (offs_d[None, :] < headdim),
+                    mask=((start_n + offs_n)[:, None] < seqlen_k) & (offs_d[None, :] < headdim),
                     other=0.0,
                 )
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
@@ -256,13 +230,9 @@ def _fwd_kernel(
         if IS_CAUSAL:
             if CAUSAL_MASK_DIAGONAL:
                 # needed for stripe attention
-                qk += tl.where(
-                    offs_m[:, None] > (start_n + offs_n)[None, :], 0, float("-inf")
-                )
+                qk += tl.where(offs_m[:, None] > (start_n + offs_n)[None, :], 0, float("-inf"))
             else:
-                qk += tl.where(
-                    offs_m[:, None] >= (start_n + offs_n)[None, :], 0, float("-inf")
-                )
+                qk += tl.where(offs_m[:, None] >= (start_n + offs_n)[None, :], 0, float("-inf"))
 
         if HAS_BIAS:
             if EVEN_N:
@@ -290,11 +260,7 @@ def _fwd_kernel(
             if EVEN_HEADDIM:
                 v = tl.load(v_ptrs + start_n * stride_vn)
             else:
-                v = tl.load(
-                    v_ptrs + start_n * stride_vn,
-                    mask=offs_d[None, :] < headdim,
-                    other=0.0,
-                )
+                v = tl.load(v_ptrs + start_n * stride_vn, mask=offs_d[None, :] < headdim, other=0.0)
         else:
             if EVEN_HEADDIM:
                 v = tl.load(
@@ -305,8 +271,7 @@ def _fwd_kernel(
             else:
                 v = tl.load(
                     v_ptrs + start_n * stride_vn,
-                    mask=((start_n + offs_n)[:, None] < seqlen_k)
-                    & (offs_d[None, :] < headdim),
+                    mask=((start_n + offs_n)[:, None] < seqlen_k) & (offs_d[None, :] < headdim),
                     other=0.0,
                 )
 
@@ -347,25 +312,22 @@ def _fwd_kernel(
             tl.store(out_ptrs, acc_o, mask=offs_m[:, None] < seqlen_q)
         else:
             tl.store(
-                out_ptrs,
-                acc_o,
-                mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim),
+                out_ptrs, acc_o, mask=(offs_m[:, None] < seqlen_q) & (offs_d[None, :] < headdim)
             )
-
 
 def flash_attn_forward(
     q,
     k,
     v,
-    bias=None,
-    causal=False,
-    o=None,
-    m=None,
-    lse=None,
-    softmax_scale=None,
-    causal_mask_diagonal=False,
-    return_normalized_output=False,
-    load_accumulated=True,
+    bias = None,
+    causal = False,
+    o = None,
+    m = None,
+    lse = None,
+    softmax_scale = None,
+    causal_mask_diagonal = False,
+    return_normalized_output = False,
+    load_accumulated = True
 ):
     q, k, v = [x if is_contiguous(x) else x.contiguous() for x in (q, k, v)]
 
@@ -379,7 +341,7 @@ def flash_attn_forward(
     assert q.dtype in [torch.float16, torch.bfloat16], "Only support fp16 and bf16"
     assert q.is_cuda and k.is_cuda and v.is_cuda
 
-    softmax_scale = default(softmax_scale, d**-0.5)
+    softmax_scale = default(softmax_scale, d ** -0.5)
 
     has_bias = exists(bias)
 
@@ -388,7 +350,7 @@ def flash_attn_forward(
         assert bias.is_cuda
 
         if bias.ndim == 2:
-            bias = repeat(bias, "b j -> b h i j", h=nheads, i=seqlen_q)
+            bias = repeat(bias, 'b j -> b h i j', h = nheads, i = seqlen_q)
 
         if not is_contiguous(bias):
             bias = bias.contiguous()
@@ -396,33 +358,19 @@ def flash_attn_forward(
         assert bias.shape[-2:] == (1, seqlen_k)
         bias = bias.expand(batch, nheads, seqlen_q, seqlen_k)
 
-    bias_strides = (
-        (bias.stride(0), bias.stride(1), bias.stride(2)) if has_bias else (0, 0, 0)
-    )
+    bias_strides = (bias.stride(0), bias.stride(1), bias.stride(2)) if has_bias else (0, 0, 0)
 
     seqlen_q_rounded = math.ceil(seqlen_q / 128) * 128
 
     if not exists(lse):
         max_neg_value = -torch.finfo(torch.float32).max
-        init_fn = (
-            partial(torch.full, fill_value=max_neg_value)
-            if load_accumulated
-            else torch.empty
-        )
-        lse = init_fn(
-            (batch, nheads, seqlen_q_rounded), device=q.device, dtype=torch.float32
-        )
+        init_fn = partial(torch.full, fill_value = max_neg_value) if load_accumulated else torch.empty
+        lse = init_fn((batch, nheads, seqlen_q_rounded), device=q.device, dtype=torch.float32)
 
     if not exists(m):
         max_neg_value = -torch.finfo(torch.float32).max
-        init_fn = (
-            partial(torch.full, fill_value=max_neg_value)
-            if load_accumulated
-            else torch.empty
-        )
-        m = init_fn(
-            (batch, nheads, seqlen_q_rounded), device=q.device, dtype=torch.float32
-        )
+        init_fn = partial(torch.full, fill_value = max_neg_value) if load_accumulated else torch.empty
+        m = init_fn((batch, nheads, seqlen_q_rounded), device=q.device, dtype=torch.float32)
 
     if not exists(o):
         init_fn = torch.zeros_like if load_accumulated else torch.empty_like
@@ -468,36 +416,30 @@ def flash_attn_forward(
         load_accumulated,
         return_normalized_output,
         BLOCK_HEADDIM,
-        BLOCK_M=BLOCK,
-        BLOCK_N=BLOCK,
-        num_warps=num_warps,
-        num_stages=1,
+        BLOCK_M = BLOCK,
+        BLOCK_N = BLOCK,
+        num_warps = num_warps,
+        num_stages = 1,
     )
 
     return o, m, lse
 
-
 # helper functions
-
 
 def exists(val):
     return val is not None
 
-
 def default(val, d):
     return val if exists(val) else d
 
-
 def divisible_by(num, den):
     return (num % den) == 0
-
 
 # ring + (flash) attention forwards and backwards
 
 # flash attention v1 - https://arxiv.org/abs/2205.14135
 # flash attention v2 - https://tridao.me/publications/flash2/flash2.pdf
 # ring attention - https://arxiv.org/abs/2310.01889
-
 
 class RingFlashAttentionCUDAFunction(Function):
 
@@ -514,9 +456,9 @@ class RingFlashAttentionCUDAFunction(Function):
         ring_reduce_col: bool,
         striped_ring_attn: bool,
         max_lookback_seq_len: Optional[int],
-        ring_size: Optional[int],
+        ring_size: Optional[int]
     ):
-        assert all([t.is_cuda for t in (q, k, v)]), "inputs must be all on cuda"
+        assert all([t.is_cuda for t in (q, k, v)]), 'inputs must be all on cuda'
 
         dtype = q.dtype
         softmax_scale = q.shape[-1] ** -0.5
@@ -537,22 +479,18 @@ class RingFlashAttentionCUDAFunction(Function):
         ring_reduce_col &= not cross_attn
         striped_ring_attn &= not cross_attn
 
-        assert (
-            k.shape[-1] == v.shape[-1]
-        ), "for simplicity when doing ring passing, assume dim_values is equal to dim_queries_keys, majority of transformer do this, not a big issue"
+        assert k.shape[-1] == v.shape[-1], 'for simplicity when doing ring passing, assume dim_values is equal to dim_queries_keys, majority of transformer do this, not a big issue'
 
         per_machine_seq_size = k.shape[-3]
 
         # calculate max ring passes
 
         max_ring_passes = None
-        num_lookback_buckets = float("inf")
+        num_lookback_buckets = float('inf')
 
         if exists(max_lookback_seq_len):
             assert causal
-            assert not (
-                ring_reduce_col and not divisible_by(per_machine_seq_size, bucket_size)
-            )
+            assert not (ring_reduce_col and not divisible_by(per_machine_seq_size, bucket_size))
 
             max_ring_passes = math.ceil(max_lookback_seq_len / per_machine_seq_size)
             num_lookback_buckets = max_lookback_seq_len // bucket_size
@@ -588,16 +526,7 @@ class RingFlashAttentionCUDAFunction(Function):
         receive_kv = None
         receive_mask = None
 
-        for (ring_rank, is_last), (
-            (kv, mask),
-            (receive_kv, receive_mask),
-        ) in ring_pass_fn(
-            kv,
-            mask,
-            receive_buffers=(receive_kv, receive_mask),
-            max_iters=max_ring_passes,
-            ring_size=ring_size,
-        ):
+        for (ring_rank, is_last), ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
             is_first = ring_rank == get_rank()
 
             k, v = kv
@@ -607,7 +536,7 @@ class RingFlashAttentionCUDAFunction(Function):
             bias = None
 
             if exists(mask):
-                bias = torch.where(mask, 0.0, max_neg_value)
+                bias = torch.where(mask, 0.,  max_neg_value)
 
             # for non-striped attention
             # if the kv ring rank is equal to the current rank (block diagonal), then turn on causal
@@ -627,18 +556,16 @@ class RingFlashAttentionCUDAFunction(Function):
                         continue
 
             o, m, lse = flash_attn_forward(
-                q,
-                k,
-                v,
-                causal=block_causal,
-                o=o,
-                m=m,
-                lse=lse,
-                bias=bias,
-                softmax_scale=softmax_scale,
-                causal_mask_diagonal=causal_mask_diagonal,
-                return_normalized_output=is_last,
-                load_accumulated=not is_first,
+                q, k, v,
+                causal = block_causal,
+                o = o,
+                m = m,
+                lse = lse,
+                bias = bias,
+                softmax_scale = softmax_scale,
+                causal_mask_diagonal = causal_mask_diagonal,
+                return_normalized_output = is_last,
+                load_accumulated = not is_first
             )
 
         ctx.args = (
@@ -651,7 +578,7 @@ class RingFlashAttentionCUDAFunction(Function):
             num_lookback_buckets,
             striped_ring_attn,
             ring_size,
-            dtype,
+            dtype
         )
 
         ctx.save_for_backward(q, orig_k, orig_v, o, lse)
@@ -664,7 +591,7 @@ class RingFlashAttentionCUDAFunction(Function):
     @staticmethod
     @torch.no_grad()
     def backward(ctx, do):
-        """Algorithm 2 in the v2 paper"""
+        """ Algorithm 2 in the v2 paper """
 
         (
             causal,
@@ -676,7 +603,7 @@ class RingFlashAttentionCUDAFunction(Function):
             num_lookback_buckets,
             striped_ring_attn,
             ring_size,
-            dtype,
+            dtype
         ) = ctx.args
 
         q, k, v, o, lse = ctx.saved_tensors
@@ -697,9 +624,9 @@ class RingFlashAttentionCUDAFunction(Function):
 
         device = q.device
 
-        dq = torch.zeros(q.shape, device=device, dtype=torch.float32)
-        dk = torch.zeros(k.shape, device=device, dtype=torch.float32)
-        dv = torch.zeros(v.shape, device=device, dtype=torch.float32)
+        dq = torch.zeros(q.shape, device = device, dtype = torch.float32)
+        dk = torch.zeros(k.shape, device = device, dtype = torch.float32)
+        dv = torch.zeros(v.shape, device = device, dtype = torch.float32)
 
         # k and v will have 16 bits, while dk, dv needs to be kept at 32
         # view everything as int for ring passing
@@ -708,7 +635,7 @@ class RingFlashAttentionCUDAFunction(Function):
         k_dtype, v_dtype = k.dtype, v.dtype
 
         k, v = map(lambda t: t.view(torch.float32), (k, v))
-        kv = torch.cat((k, v), dim=-1)
+        kv = torch.cat((k, v), dim = -1)
 
         kv_and_dkv = torch.stack((kv, dk, dv))
 
@@ -717,22 +644,13 @@ class RingFlashAttentionCUDAFunction(Function):
         receive_kv_and_dkv = None
         receive_mask = None
 
-        for (ring_rank, is_last), (
-            (kv_and_dkv, mask),
-            (receive_kv_and_dkv, receive_mask),
-        ) in ring_pass_fn(
-            kv_and_dkv,
-            mask,
-            receive_buffers=(receive_kv_and_dkv, receive_mask),
-            max_iters=max_ring_passes,
-            ring_size=ring_size,
-        ):
+        for (ring_rank, is_last), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             kv, dk, dv = kv_and_dkv
 
             # reconstitute correct types for k, v, dk, dv
 
-            k, v = kv.chunk(2, dim=-1)
+            k, v = kv.chunk(2, dim = -1)
             k, v = k.view(k_dtype), v.view(v_dtype)
 
             # determine whether to do causal mask or not
@@ -791,24 +709,24 @@ class RingFlashAttentionCUDAFunction(Function):
                 raise NotImplementedError
 
                 ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
-                    dout=do,
-                    q=q,
-                    k=k,
-                    v=v,
-                    out=o,
-                    softmax_lse=lse,
-                    dq=torch.zeros_like(q),
-                    dk=torch.zeros_like(k),
-                    dv=torch.zeros_like(v),
-                    cu_seqlens_q=None,
-                    cu_seqlens_k=None,
-                    max_seqlen_q=None,
-                    max_seqlen_k=None,
-                    softmax_scale=softmax_scale,
-                    causal=False,
-                    window_size=(-1, -1),
-                    alibi_slopes=None,
-                    deterministic=False,
+                    dout = do,
+                    q = q,
+                    k = k,
+                    v = v,
+                    out = o,
+                    softmax_lse = lse,
+                    dq = torch.zeros_like(q),
+                    dk = torch.zeros_like(k),
+                    dv = torch.zeros_like(v),
+                    cu_seqlens_q = None,
+                    cu_seqlens_k = None,
+                    max_seqlen_q = None,
+                    max_seqlen_k = None,
+                    softmax_scale = softmax_scale,
+                    causal = False,
+                    window_size = (-1, -1),
+                    alibi_slopes = None,
+                    deterministic = False
                 )
 
             dq.add_(ring_dq)
@@ -829,9 +747,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
         return dq, dk, dv, None, None, None, None, None, None, None
 
-
 ring_flash_attn_cuda_ = RingFlashAttentionCUDAFunction.apply
-
 
 @beartype
 def ring_flash_attn_cuda(
@@ -844,6 +760,6 @@ def ring_flash_attn_cuda(
     ring_reduce_col: bool = False,
     striped_ring_attn: bool = False,
     max_lookback_seq_len: Optional[int] = None,
-    ring_size: Optional[int] = None,
+    ring_size: Optional[int] = None
 ):
     return ring_flash_attn_cuda_(q, k, v, mask, causal, bucket_size, ring_reduce_col, striped_ring_attn, max_lookback_seq_len, ring_size)
