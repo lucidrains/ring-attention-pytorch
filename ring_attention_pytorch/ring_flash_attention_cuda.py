@@ -1,4 +1,5 @@
 import math
+from functools import partial
 from typing import Optional, Tuple
 import packaging.version as pkg_version
 
@@ -17,6 +18,8 @@ from ring_attention_pytorch.ring import (
 )
 
 from beartype import beartype
+
+from einops import repeat
 
 # helpers
 
@@ -655,6 +658,7 @@ class RingFlashAttentionCUDAFunction(Function):
             if causal or not exists(mask):
 
                 block_causal = False
+                need_accum = True
 
                 if causal:
                     if striped_ring_attn:
@@ -664,33 +668,38 @@ class RingFlashAttentionCUDAFunction(Function):
                             # this is a hack that should also mask out the diagonal
                             # https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#21-change-behavior-of-causal-flag
                             q = pad_at_dim(q, (0, 1), dim = -3)
+                            o = pad_at_dim(o, (0, 1), dim = -3)
                     else:
                         block_causal = get_rank() == ring_rank
 
                         if get_rank() < ring_rank:
-                            continue
+                            need_accum = False
 
                 # use flash attention backwards kernel to calculate dq, dk, dv and accumulate
 
-                ring_dq, ring_dk, ring_dv, *_ = _flash_attn_backward(
-                    dout = do,
-                    q = q,
-                    k = k,
-                    v = v,
-                    out = o,
-                    softmax_lse = lse,
-                    dq = torch.zeros_like(q),
-                    dk = torch.zeros_like(k),
-                    dv = torch.zeros_like(v),
-                    dropout_p = 0.,
-                    softmax_scale = softmax_scale,
-                    causal = block_causal,
-                    window_size = (-1, -1),
-                    alibi_slopes = None,
-                    deterministic = False
-                )
+                if need_accum:
+                    ring_dq, ring_dk, ring_dv, *_ = _flash_attn_backward(
+                        dout = do,
+                        q = q,
+                        k = k,
+                        v = v,
+                        out = o,
+                        softmax_lse = lse,
+                        dq = torch.zeros_like(q),
+                        dk = torch.zeros_like(k),
+                        dv = torch.zeros_like(v),
+                        dropout_p = 0.,
+                        softmax_scale = softmax_scale,
+                        causal = block_causal,
+                        window_size = (-1, -1),
+                        alibi_slopes = None,
+                        deterministic = False
+                    )
 
-                ring_dq = ring_dq[:, :row_length]
+                    ring_dq = ring_dq[:, :row_length]
+
+                else:
+                    ring_dq, ring_dk, ring_dv = 0., 0., 0.
 
             else:
                 raise NotImplementedError
@@ -750,4 +759,3 @@ def ring_flash_attn_cuda(
     ring_size: Optional[int] = None
 ):
     return ring_flash_attn_cuda_(q, k, v, mask, causal, bucket_size, ring_reduce_col, striped_ring_attn, max_lookback_seq_len, ring_size)
-
