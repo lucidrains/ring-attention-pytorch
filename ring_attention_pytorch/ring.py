@@ -63,10 +63,14 @@ def circular_rank_right(rank = None, ring_size = None, num = 1):
 # one ring pass
 
 def send_and_receive_(x, receive_buffer, send_to_rank, receive_from_rank):
-    send_request = dist.isend(x, send_to_rank)
-    dist.recv(receive_buffer, receive_from_rank)
+    send_op = dist.P2POp(dist.isend, x, send_to_rank)
+    recv_op = dist.P2POp(dist.irecv, receive_buffer, receive_from_rank)
 
-    send_request.wait()
+    reqs = dist.batch_isend_irecv([send_op, recv_op])
+
+    for req in reqs:
+        req.wait()
+
     dist.barrier()
 
 def ring_pass(

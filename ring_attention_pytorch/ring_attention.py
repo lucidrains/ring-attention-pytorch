@@ -363,7 +363,7 @@ class RingAttention(Module):
             out = default_attention(q, k, v, mask = mask, causal = self.causal)
 
         elif any_cuda_inputs and self.use_cuda_kernel:
-            from ring_attention_pytorch.ring_flash_attention_cuda import ring_flash_attention_cuda
+            from ring_attention_pytorch.ring_flash_attention_cuda import ring_flash_attn_cuda
 
             out = ring_flash_attn_cuda(
                 q, k, v,
