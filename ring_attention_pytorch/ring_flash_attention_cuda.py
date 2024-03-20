@@ -502,7 +502,7 @@ class RingFlashAttentionCUDAFunction(Function):
         bucket_size = min(per_machine_seq_size, bucket_size)
         per_machine_buckets = per_machine_seq_size // bucket_size
 
-        orig_k, orig_v, orig_mask, device = k, v, mask, q.device
+        orig_k, orig_v, orig_mask, q_seq_len, device = k, v, mask, q.shape[1], q.device
 
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
 
@@ -579,6 +579,8 @@ class RingFlashAttentionCUDAFunction(Function):
             ring_size,
             dtype
         )
+
+        lse = lse[..., :q_seq_len]
 
         ctx.save_for_backward(q, orig_k, orig_v, o, lse)
 
@@ -667,8 +669,10 @@ class RingFlashAttentionCUDAFunction(Function):
                         if get_rank() < ring_rank:
                             # this is a hack that should also mask out the diagonal
                             # https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#21-change-behavior-of-causal-flag
-                            q = pad_at_dim(q, (0, 1), dim = -3)
-                            o = pad_at_dim(o, (0, 1), dim = -3)
+                            q = pad_at_dim(q, (0, 1), dim = 1)
+                            o = pad_at_dim(o, (0, 1), dim = 1)
+                            do = pad_at_dim(do, (0, 1), dim = 1)
+                            lse = pad_at_dim(lse, (0, 1), dim = -1)
                     else:
                         block_causal = get_rank() == ring_rank
 
@@ -703,6 +707,8 @@ class RingFlashAttentionCUDAFunction(Function):
 
                 q = q[:, :row_length]
                 o = o[:, :row_length]
+                do = do[:, :row_length]
+                lse = lse[..., :row_length]
 
             else:
                 raise NotImplementedError
