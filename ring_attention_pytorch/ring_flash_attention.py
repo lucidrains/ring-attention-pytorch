@@ -76,7 +76,7 @@ class RingFlashAttentionFunction(Function):
 
         assert k.shape[-1] == v.shape[-1]
 
-        per_machine_seq_size = k.shape[-2]
+        per_machine_seq_size = k.shape[1]
 
         # calculate max ring passes
 
@@ -114,8 +114,6 @@ class RingFlashAttentionFunction(Function):
 
         scale = (q.shape[-1] ** -0.5)
 
-        num_tiles = math.ceil(per_machine_seq_size / bucket_size)
-
         kv = torch.stack((k, v))
 
         # receive buffers, to be alternated with sent buffer
@@ -146,8 +144,6 @@ class RingFlashAttentionFunction(Function):
 
                 for ind, (qc, oc, row_sums, row_maxes) in enumerate(row_splits):
 
-                    qk_len_diff = kc.shape[-3] - qc.shape[-3]
-
                     row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
                     attn_weights = einsum('b i h d, b j h d -> b h i j', qc, kc) * scale
@@ -156,6 +152,8 @@ class RingFlashAttentionFunction(Function):
                         attn_weights = einx.where('b j, b h i j, -> b h i j', col_mask, attn_weights, max_neg_value)
 
                     if causal:
+                        qk_len_diff = kc.shape[-3] - qc.shape[-3]
+
                         if (row_bucket_index - col_bucket_index) > num_lookback_buckets:
                             continue
 
@@ -236,7 +234,7 @@ class RingFlashAttentionFunction(Function):
 
         row_ring_rank = (get_rank() % ring_size) if ring_reduce_col else 0
 
-        per_machine_seq_size = k.shape[-3]
+        per_machine_seq_size = k.shape[1]
         per_machine_buckets = per_machine_seq_size // bucket_size
 
         ring_pass_fn = all_ring_pass if ring_reduce_col else null_ring_pass
@@ -249,13 +247,7 @@ class RingFlashAttentionFunction(Function):
         dk = torch.zeros_like(k)
         dv = torch.zeros_like(v)
 
-        row_splits = zip(
-            q.split(bucket_size, dim = -3),
-            o.split(bucket_size, dim = -3),
-            do.split(bucket_size, dim = -3),
-            lse.split(bucket_size, dim = -2),
-            dq.split(bucket_size, dim = -3)
-        )
+        # kv and dkv sent around the ring in one go
 
         kv_and_dkv = torch.stack((k, v, dk, dv))
 
@@ -265,25 +257,31 @@ class RingFlashAttentionFunction(Function):
         receive_mask = None
 
         for (ring_rank, is_last), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
+            k_ring_rank = ring_rank % ring_size
 
             k, v, dk, dv = kv_and_dkv
 
             col_splits = zip(
-                k.split(bucket_size, dim = -3),
-                v.split(bucket_size, dim = -3),
-                dk.split(bucket_size, dim = -3),
-                dv.split(bucket_size, dim = -3),
+                k.split(bucket_size, dim = 1),
+                v.split(bucket_size, dim = 1),
+                dk.split(bucket_size, dim = 1),
+                dv.split(bucket_size, dim = 1),
                 maybe_split(mask, bucket_size, dim = -1)
             )
 
             for k_ind, (kc, vc, dkc, dvc, col_mask) in enumerate(col_splits):
-                col_ring_rank = ring_rank % ring_size
-                col_bucket_index = col_ring_rank * per_machine_buckets + k_ind
+                col_bucket_index = k_ring_rank * per_machine_buckets + k_ind
+
+                row_splits = zip(
+                    q.split(bucket_size, dim = 1),
+                    o.split(bucket_size, dim = 1),
+                    do.split(bucket_size, dim = 1),
+                    lse.split(bucket_size, dim = -2),
+                    dq.split(bucket_size, dim = 1)
+                )
 
                 for ind, (qc, oc, doc, lsec, dqc) in enumerate(row_splits):
                     row_bucket_index = row_ring_rank * per_machine_buckets + ind
-
-                    qk_len_diff = kc.shape[-3] - qc.shape[-3]
 
                     attn_weights = einsum('b i h d, b j h d -> b h i j', qc, kc) * scale
 
@@ -295,11 +293,11 @@ class RingFlashAttentionFunction(Function):
                             # `GetMaskStripedAttention` pseudocode at end of section 2.2.1 of https://arxiv.org/abs/2311.09431
 
                             triu_offset = int(row_bucket_index >= col_bucket_index)
-                            causal_mask = torch.ones((qc.shape[-3], kc.shape[-3]), dtype = torch.bool, device = device).triu(triu_offset + qk_len_diff)
+                            causal_mask = torch.ones((qc.shape[1], kc.shape[1]), dtype = torch.bool, device = device).triu(triu_offset)
                             attn_weights.masked_fill_(causal_mask, max_neg_value)
                         else:
                             if row_bucket_index == col_bucket_index:
-                                causal_mask = torch.ones((qc.shape[-3], kc.shape[-3]), dtype = torch.bool, device = device).triu(1 + qk_len_diff)
+                                causal_mask = torch.ones((qc.shape[1], kc.shape[1]), dtype = torch.bool, device = device).triu(1)
                                 attn_weights.masked_fill_(causal_mask, max_neg_value)
                             elif row_bucket_index < col_bucket_index:
                                 attn_weights.fill_(max_neg_value)
