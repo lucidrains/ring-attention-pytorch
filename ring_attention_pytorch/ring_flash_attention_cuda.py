@@ -7,6 +7,7 @@ import torch
 from torch import nn, einsum, Tensor
 import torch.nn.functional as F
 from torch.autograd.function import Function
+from einops import repeat
 
 from ring_attention_pytorch.ring import (
     ring_pass,
