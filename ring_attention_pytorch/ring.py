@@ -94,10 +94,10 @@ one_ring_pass = partial(ring_pass, 1)
 
 # iterator for all ring passes of all tensors
 
-RingInfo = namedtuple('RingInfo', ['ring_rank', 'is_last'])
+RingInfo = namedtuple('RingInfo', ['ring_rank', 'iter_info'])
 
 def null_ring_pass(*tensors, max_iters = None, receive_buffers = None, ring_size = None):
-    yield RingInfo(0, True), (tensors, receive_buffers)
+    yield RingInfo(0, (True, True)), (tensors, receive_buffers)
 
 def all_ring_pass(*tensors, max_iters = None, receive_buffers = None, ring_size = None):
     ring_size = default(ring_size, get_world_size())
@@ -112,9 +112,10 @@ def all_ring_pass(*tensors, max_iters = None, receive_buffers = None, ring_size 
     curr_ring_pos = get_rank()
 
     for ind in range(total_iters):
+        is_first = ind == 0
         is_last = ind == (total_iters - 1)
 
-        yield RingInfo(curr_ring_pos, is_last), (tensors, receive_buffers)
+        yield RingInfo(curr_ring_pos, (is_first,  is_last)), (tensors, receive_buffers)
 
         curr_ring_pos = circular_index_left(curr_ring_pos, ring_size)
 

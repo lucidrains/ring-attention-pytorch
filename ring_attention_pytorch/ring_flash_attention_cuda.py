@@ -19,7 +19,7 @@ from ring_attention_pytorch.ring import (
 
 from beartype import beartype
 
-from einops import repeat
+from einops import repeat, rearrange
 
 # helpers
 
@@ -525,9 +525,7 @@ class RingFlashAttentionCUDAFunction(Function):
         receive_kv = None
         receive_mask = None
 
-        for (ring_rank, is_last), ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
-            is_first = ring_rank == get_rank()
-
+        for (ring_rank, (is_first, is_last)), ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
             k, v = kv
 
             # translate key padding mask to bias
@@ -563,9 +561,12 @@ class RingFlashAttentionCUDAFunction(Function):
                 bias = bias,
                 softmax_scale = softmax_scale,
                 causal_mask_diagonal = causal_mask_diagonal,
-                return_normalized_output = is_last,
+                return_normalized_output = False,
                 load_accumulated = not is_first
             )
+
+        o_scale = torch.exp(m - lse)
+        o.mul_(rearrange(o_scale, 'b h n -> b n h 1'))
 
         ctx.args = (
             causal,
@@ -645,7 +646,7 @@ class RingFlashAttentionCUDAFunction(Function):
         receive_kv_and_dkv = None
         receive_mask = None
 
-        for (ring_rank, is_last), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
+        for (ring_rank, _), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             kv, dk, dv = kv_and_dkv
 
