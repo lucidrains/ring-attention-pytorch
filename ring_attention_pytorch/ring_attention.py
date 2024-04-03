@@ -100,11 +100,14 @@ class RingRotaryEmbedding(Module):
     def device(self):
         return self.inv_freq.device
 
+    @property
+    def is_cuda(self):
+        return self.inv_freq.is_cuda
+
     @autocast(enabled = False)
     def forward(
         self,
-        seq_len: int,
-        buckets: Optional[int] = None
+        seq_len: int
     ):
         device = self.device
 
@@ -112,7 +115,7 @@ class RingRotaryEmbedding(Module):
 
         if self.ring:
             if self.striped:
-                buckets = default(buckets, self.buckets)
+                buckets = 1 if self.is_cuda else self.buckets
                 ring_stride = get_world_size() * buckets
 
                 pos = torch.arange(seq_len // buckets, device = device)
@@ -356,10 +359,7 @@ class RingAttention(Module):
         # rotary relative positions
 
         if not exists(rotary_emb) and exists(self.rotary_embed):
-            rotary_emb = self.rotary_embed(
-                q.shape[-2],
-                buckets = (1 if using_striped_ring_cuda else None)
-            )
+            rotary_emb = self.rotary_embed(q.shape[-2])
 
         if exists(rotary_emb):
             q = apply_rotary_pos_emb(rotary_emb, q)
@@ -583,10 +583,7 @@ class RingTransformer(Module):
         # rotary positions
         # taking into account ring and striping
 
-        rotary_emb = self.rotary_emb(
-            x.shape[-1],
-            buckets = (1 if using_striped_ring_cuda else None)
-        )
+        rotary_emb = self.rotary_emb(x.shape[-1])
 
         # main transformer logic
 

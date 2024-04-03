@@ -457,6 +457,8 @@ class RingFlashAttentionCUDAFunction(Function):
         max_lookback_seq_len: Optional[int],
         ring_size: Optional[int]
     ):
+        assert causal, 'non-causal is not supported yet for ring (striped) flash attention'
+
         assert all([t.is_cuda for t in (q, k, v)]), 'inputs must be all on cuda'
 
         dtype = q.dtype
