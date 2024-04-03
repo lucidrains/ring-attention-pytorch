@@ -48,6 +48,7 @@ def default_attention(
     mask: Optional[Tensor] = None,
     causal: bool = False
 ):
+    device = q.device
     q = q * (q.shape[-1] ** -0.5)
 
     mask_value = -torch.finfo(q.dtype).max
@@ -60,7 +61,7 @@ def default_attention(
 
     if causal:
         i, j = sim.shape[-2:]
-        causal_mask = torch.ones((i, j), dtype = torch.bool).triu(j - i + 1)
+        causal_mask = torch.ones((i, j), dtype = torch.bool, device = device).triu(j - i + 1)
         sim = torch.where(causal_mask, mask_value, sim)
 
     elif exists(mask):
