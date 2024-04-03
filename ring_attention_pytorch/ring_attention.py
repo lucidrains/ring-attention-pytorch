@@ -258,7 +258,7 @@ class RingAttention(Module):
         force_regular_attn: bool = False,
         rotary_embed: bool = False,
         rotary_embed_theta: int = 10000,
-        use_cuda_kernel: bool = None
+        use_cuda_kernel: Optional[bool] = None
     ):
         super().__init__()
         self.eps = eps
@@ -439,7 +439,8 @@ class RingTransformer(Module):
         auto_shard_seq: Optional[bool] = None,
         max_lookback_seq_len: Optional[Union[Tuple[int, ...], int]] = None,
         rotary_embed_theta: int = 10000,    # will need to be changed for the million token context
-        ignore_index: int = -1
+        ignore_index: int = -1,
+        use_cuda_kernel: Optional[bool] = None
     ):
         super().__init__()
         self.ring_attn = ring_attn
@@ -483,6 +484,7 @@ class RingTransformer(Module):
                     ring_seq_size = ring_seq_size,
                     max_lookback_seq_len = layer_max_lookback_seq_len,
                     striped_ring_attn = striped_ring_attn,
+                    use_cuda_kernel = use_cuda_kernel,
                     auto_shard_seq = False,
                 ),
                 FeedForward(dim = dim, mult = ff_mult)

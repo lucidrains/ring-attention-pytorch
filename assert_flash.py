@@ -42,3 +42,5 @@ fo.sum().backward()
 assert torch.allclose(rq.grad, fq.grad, atol = 1e-6)
 assert torch.allclose(rk.grad, fk.grad, atol = 1e-6)
 assert torch.allclose(rv.grad, fv.grad, atol = 1e-6)
+
+print('✅ outputs and gradients are same between regular attention and naive flash attention')

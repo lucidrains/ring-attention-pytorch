@@ -63,7 +63,8 @@ def start(
         depth = 2,
         dim_head = 8,
         ring_attn = False,
-        bucket_size = bucket_size
+        bucket_size = bucket_size,
+        use_cuda_kernel = False
     )
 
     flash_attention_net.load_state_dict(ring_attention_net.state_dict())
