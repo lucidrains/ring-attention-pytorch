@@ -10,10 +10,19 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from ring_attention_pytorch.ring_attention import RingTransformer
 from ring_attention_pytorch.distributed import all_gather_variable_dim
 
-def setup(rank, world_size):
+def setup(
+    rank,
+    world_size,
+    use_cuda
+):
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
-    dist.init_process_group("gloo", rank = rank, world_size = world_size)
+
+    backend = "gloo" if not use_cuda else "nccl"
+    dist.init_process_group(backend, rank = rank, world_size = world_size)
+
+    if use_cuda:
+        torch.cuda.set_device(rank)
 
 def cleanup():
     dist.destroy_process_group()
@@ -30,7 +39,7 @@ def start(
     dim,
     use_cuda
 ):
-    setup(rank, world_size)
+    setup(rank, world_size, use_cuda)
 
     ring_seq_size = ceil(seq_len / world_size) * num_sharded_batches
     bucket_size = ring_seq_size // 2
@@ -64,15 +73,17 @@ def start(
 
     seq = torch.randint(0, 256, (batch_size, seq_len))
 
+    # move to cuda if needed
+
+    if use_cuda:
+        seq = seq.cuda(rank)
+        flash_attention_net.cuda(rank)
+        ring_attention_net.cuda(rank)
+
     # wrap
 
     ddp_ring_attention_net = DDP(ring_attention_net)
     ddp_flash_attention_net = DDP(flash_attention_net)
-
-    if use_cuda:
-        seq = inputs.cuda(rank)
-        flash_attention_net.cuda(rank)
-        ring_attention_net.cuda(rank)
 
     # flash
 
@@ -122,7 +133,7 @@ if __name__ == '__main__':
     causal = True
     striped_ring_attn = True
 
-    assert not use_cuda or torch.cuda.device_count() <= world_size
+    assert not use_cuda or world_size <= torch.cuda.device_count(), 'world size must be less than the number of cuda devices'
 
     seq_len = 31
     dim = 8
