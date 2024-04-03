@@ -253,7 +253,7 @@ class RingAttention(Module):
         ring_seq_size: int = 512,
         max_lookback_seq_len: Optional[int] = None,
         striped_ring_attn: bool = False,
-        auto_shard_seq: Optional[bool] = None,
+        auto_shard_seq: bool = False,
         prenorm: bool = True,
         force_regular_attn: bool = False,
         rotary_embed: bool = False,
@@ -396,6 +396,10 @@ class RingAttention(Module):
 
         if auto_shard_seq:
             out, _ = sharded_seq_to_sharded_batch(out, batch_sizes)
+
+            if self.striped_ring_attn:
+                out = rearrange('b (j i) d -> b (i j) d', out, i = self.bucket_size)
+
             out = out[:, :seq_len]
 
         return out
@@ -600,6 +604,6 @@ class RingTransformer(Module):
         logits = sharded_seq_to_sharded_batch(logits, batch_sizes, num_sharded_batches)
 
         if self.striped_ring_attn:
-            logits = rearrange('b (i j) d -> b (j i) d', logits, j = self.bucket_size)
+            logits = rearrange('b (j i) d -> b (i j) d', logits, i = self.bucket_size)
 
         return logits[:, :seq_len]
