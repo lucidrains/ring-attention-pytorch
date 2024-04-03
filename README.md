@@ -84,6 +84,8 @@ $ python assert.py
 - [x] fix naive flash attention backwards
 - [x] validate cuda causal and striped ring attention works
 
+- [ ] make sure cuda striped attention works for multiple buckets, otherwise flash attention is ineffective
+- [ ] for cuda striped attention, for backwards hack, pad the extra token once and index out when passing into Tri's cuda kernel
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
