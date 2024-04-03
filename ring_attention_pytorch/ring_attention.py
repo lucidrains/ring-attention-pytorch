@@ -104,7 +104,6 @@ class RingRotaryEmbedding(Module):
     def forward(
         self,
         seq_len: int,
-        offset = 0,
         buckets: Optional[int] = None
     ):
         device = self.device
@@ -116,7 +115,6 @@ class RingRotaryEmbedding(Module):
             if self.striped:
                 buckets = self.buckets
                 ring_stride = get_world_size() * buckets
-                ring_offset = buckets
 
                 pos = torch.arange(seq_len // buckets, device = device)
                 pos = rearrange('n -> n b', pos, b = buckets)
@@ -359,7 +357,10 @@ class RingAttention(Module):
         # rotary relative positions
 
         if not exists(rotary_emb) and exists(self.rotary_embed):
-            rotary_emb = self.rotary_embed(q.shape[-2])
+            rotary_emb = self.rotary_embed(
+                q.shape[-2],
+                buckets = (1 if using_striped_ring_cuda else None)
+            )
 
         if exists(rotary_emb):
             q = apply_rotary_pos_emb(rotary_emb, q)
