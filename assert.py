@@ -1,4 +1,5 @@
 import os
+import click
 from math import ceil
 from copy import deepcopy
 
@@ -128,20 +129,30 @@ def start(
 
     cleanup()
 
-if __name__ == '__main__':
-    world_size = 2
-    batch_size = 2
-    num_sharded_batches = 1
-    batch_size_var_len = False
-    use_cuda = True
-    causal = True
-    striped_ring_attn = True
-    num_buckets = 2
-
-    assert not use_cuda or world_size <= torch.cuda.device_count(), 'world size must be less than the number of cuda devices'
-
-    seq_len = 31
-    dim = 8
+@click.command()
+@click.option('--world-size', default = 8, help = 'number of machines / processes')
+@click.option('--batch-size', default = 2, help = 'test batch size')
+@click.option('--num-sharded-batches', default = 1, help = 'number of sharded batches')
+@click.option('--batch-size-var-len', is_flag = True, help = 'test variable lengthed batch sizes')
+@click.option('--use-cuda', is_flag = True, help = 'whether to test with CUDA and NCCL')
+@click.option('--causal', is_flag = True, help = 'test autoregressive')
+@click.option('--striped-ring-attn', is_flag = True, help = 'test striped ring attention from MIT follow up paper')
+@click.option('--num-buckets', default = 2, help = 'number of buckets per machine (each sharded sequence is further windowed for flash attention to achieve even greater context lengths)')
+@click.option('--seq-len', default = 31, help = 'sequence length to test')
+@click.option('--model-dim', default = 8, help = 'model dimensions for testing')
+def test(
+    world_size: int,
+    batch_size: int,
+    num_sharded_batches: int,
+    batch_size_var_len: bool,
+    use_cuda: bool,
+    causal: bool,
+    striped_ring_attn: bool,
+    num_buckets: int,
+    seq_len: int,
+    model_dim: int
+):
+    assert not use_cuda or world_size <= torch.cuda.device_count(), f'world size {world_size} must be less than the number of cuda devices {torch.cuda.device_count()}'
 
     mp.spawn(
         start,
@@ -154,9 +165,12 @@ if __name__ == '__main__':
             num_sharded_batches,
             causal,
             striped_ring_attn,
-            dim,
+            model_dim,
             use_cuda
         ),
         nprocs = world_size,
         join = True
     )
+
+if __name__ == '__main__':
+    test()

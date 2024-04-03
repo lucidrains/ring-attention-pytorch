@@ -44,8 +44,16 @@ assert attended.shape == tokens.shape
 
 ## Test
 
+First install requirements
+
 ```bash
-$ python assert.py
+$ pip install -r requirements.txt
+```
+
+Then say testing autoregressive striped ring attention on cuda would be
+
+```bash
+$ python assert.py --use-cuda --causal --striped-ring-attn
 ```
 
 ## Todo
