@@ -264,7 +264,11 @@ class RingAttention(Module):
         use_cuda_kernel: Optional[bool] = None
     ):
         super().__init__()
+        # whether to use flash attention cuda kernel
+
         use_cuda_kernel = default(use_cuda_kernel, torch.cuda.is_available())
+        assert not (use_cuda_kernel and not torch.cuda.is_available())
+        self.use_cuda_kernel = use_cuda_kernel
 
         self.eps = eps
         self.heads = heads
@@ -276,6 +280,8 @@ class RingAttention(Module):
         self.ring_attn = ring_attn
         self.max_lookback_seq_len = max_lookback_seq_len
         self.striped_ring_attn = striped_ring_attn
+
+        self.using_striped_ring_cuda = striped_ring_attn and use_cuda_kernel
 
         self.force_regular_attn = force_regular_attn
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # this should be done at the transformer level on the token ids for efficiency, but for testing purposes
@@ -308,11 +314,6 @@ class RingAttention(Module):
 
         self.to_out = nn.Linear(dim_inner, dim, bias = False)
 
-        # whether to use flash attention cuda kernel
-
-        self.use_cuda_kernel = default(use_cuda_kernel, torch.cuda.is_available())
-        assert not (use_cuda_kernel and not torch.cuda.is_available())
-
     def forward(
         self,
         x,
@@ -334,14 +335,15 @@ class RingAttention(Module):
         ring_attn = self.ring_attn & is_distributed()
         auto_shard_seq = self.auto_shard_seq & is_distributed()
 
+        using_striped_ring_cuda = x.is_cuda and self.using_striped_ring_cuda
+        striped_bucket_size = self.bucket_size if not using_striped_ring_cuda else self.ring_seq_size
+
         seq_len = x.shape[-1]
 
         if auto_shard_seq:
             x, mask = maybe_pad_seq_and_mask(x, mask, self.ring_seq_size)
 
             if self.striped_ring_attn:
-                striped_bucket_size = self.bucket_size if not self.use_cuda_kernel else self.ring_seq_size
-
                 x = rearrange('b (i j) d -> b (j i) d', x, i = striped_bucket_size)
 
                 if exists(mask):
@@ -454,11 +456,15 @@ class RingTransformer(Module):
         use_cuda_kernel: Optional[bool] = None
     ):
         super().__init__()
-        self.use_cuda_kernel = default(use_cuda_kernel, torch.cuda.is_available())
+
+        use_cuda_kernel = default(use_cuda_kernel, torch.cuda.is_available())
+        self.use_cuda_kernel = use_cuda_kernel
         assert not (use_cuda_kernel and not torch.cuda.is_available())
 
         self.ring_attn = ring_attn
         self.striped_ring_attn = striped_ring_attn
+
+        self.using_striped_ring_cuda = use_cuda_kernel and striped_ring_attn
 
         self.ring_seq_size = ring_seq_size
         self.bucket_size = bucket_size
@@ -525,7 +531,9 @@ class RingTransformer(Module):
         seq_len, device = x.shape[-1], x.device
 
         auto_shard_seq = not force_ring_reduce_off and self.auto_shard_seq and is_distributed()
-        using_striped_ring_cuda = x.is_cuda and self.striped_ring_attn and self.use_cuda_kernel
+
+        using_striped_ring_cuda = x.is_cuda and self.using_striped_ring_cuda
+        striped_bucket_size = self.bucket_size if not using_striped_ring_cuda else self.ring_seq_size
 
         # get labels if not passed in
 
@@ -553,8 +561,6 @@ class RingTransformer(Module):
             # for workload balancing https://arxiv.org/abs/2311.09431 - MIT paper from Brandon et al.
 
             if self.striped_ring_attn:
-                striped_bucket_size = self.bucket_size if not self.use_cuda_kernel else self.ring_seq_size
-
                 x = rearrange('b (i j) -> b (j i)', x, i = striped_bucket_size)
 
                 if exists(labels):
