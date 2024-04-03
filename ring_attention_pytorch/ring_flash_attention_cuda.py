@@ -19,7 +19,7 @@ from ring_attention_pytorch.ring import (
 
 from beartype import beartype
 
-from einops import repeat, rearrange
+from einx import rearrange
 
 # helpers
 
@@ -349,7 +349,7 @@ def flash_attn_forward(
         assert bias.is_cuda
 
         if bias.ndim == 2:
-            bias = repeat(bias, 'b j -> b h i j', h = nheads, i = seqlen_q)
+            bias = rearrange('b j -> b h i j', bias, h = nheads, i = seqlen_q)
 
         if not is_contiguous(bias):
             bias = bias.contiguous()
@@ -569,7 +569,7 @@ class RingFlashAttentionCUDAFunction(Function):
         m = m[..., :q_seq_len]
 
         o_scale = torch.exp(m - lse)
-        o.mul_(rearrange(o_scale, 'b h n -> b n h 1'))
+        o.mul_(rearrange('b h n -> b n h 1', o_scale))
 
         ctx.args = (
             causal,
