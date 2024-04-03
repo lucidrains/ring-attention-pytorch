@@ -107,13 +107,12 @@ class RingRotaryEmbedding(Module):
         buckets: Optional[int] = None
     ):
         device = self.device
-        buckets = default(buckets, self.buckets)
 
         pos = None
 
         if self.ring:
             if self.striped:
-                buckets = self.buckets
+                buckets = default(buckets, self.buckets)
                 ring_stride = get_world_size() * buckets
 
                 pos = torch.arange(seq_len // buckets, device = device)

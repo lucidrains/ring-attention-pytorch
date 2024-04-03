@@ -129,11 +129,11 @@ def start(
     cleanup()
 
 if __name__ == '__main__':
-    world_size = 8
+    world_size = 2
     batch_size = 2
     num_sharded_batches = 1
     batch_size_var_len = False
-    use_cuda = False
+    use_cuda = True
     causal = True
     striped_ring_attn = True
     num_buckets = 2
