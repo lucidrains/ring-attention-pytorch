@@ -33,6 +33,7 @@ def start(
     batch_size,
     batch_size_var_len,
     seq_len,
+    num_buckets,
     num_sharded_batches,
     causal,
     striped_ring_attn,
@@ -42,7 +43,7 @@ def start(
     setup(rank, world_size, use_cuda)
 
     ring_seq_size = ceil(seq_len / world_size) * num_sharded_batches
-    bucket_size = ring_seq_size // 2
+    bucket_size = ring_seq_size // num_buckets
 
     ring_attention_net = RingTransformer(
         num_tokens = 256,
@@ -108,6 +109,7 @@ def start(
         flash_out = flash_out.cpu()
 
         output_atol = 1e-2 if use_cuda else 1e-6
+
         assert torch.allclose(ring_out, flash_out, atol = output_atol), 'output is not the same'
 
         # validate gradients of token embedding is the same for ring vs non-ring
@@ -134,6 +136,7 @@ if __name__ == '__main__':
     use_cuda = False
     causal = True
     striped_ring_attn = True
+    num_buckets = 2 if not striped_ring_attn else 1
 
     assert not use_cuda or world_size <= torch.cuda.device_count(), 'world size must be less than the number of cuda devices'
 
@@ -147,6 +150,7 @@ if __name__ == '__main__':
             batch_size,
             batch_size_var_len,
             seq_len,
+            num_buckets,
             num_sharded_batches,
             causal,
             striped_ring_attn,

@@ -272,6 +272,8 @@ class RingAttention(Module):
         self.max_lookback_seq_len = max_lookback_seq_len
         self.striped_ring_attn = striped_ring_attn
 
+        assert not (striped_ring_attn and use_cuda_kernel and bucket_size != ring_seq_size), 'for now, striped ring attention using cuda kernel can only work with 1 bucket per machine'
+
         self.force_regular_attn = force_regular_attn
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # this should be done at the transformer level on the token ids for efficiency, but for testing purposes
 
@@ -453,6 +455,8 @@ class RingTransformer(Module):
         self.ring_seq_size = ring_seq_size
         self.bucket_size = bucket_size
         assert divisible_by(ring_seq_size, bucket_size)
+
+        assert not (striped_ring_attn and use_cuda_kernel and bucket_size != ring_seq_size), 'for now, striped ring attention using cuda kernel can only work with 1 bucket per machine'
 
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # if ring attention is turned on, auto-shard across sequence dimension. this can also be turned off and done manually elsewhere in the data loading
 
