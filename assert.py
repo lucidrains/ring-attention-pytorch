@@ -136,7 +136,7 @@ if __name__ == '__main__':
     use_cuda = False
     causal = True
     striped_ring_attn = True
-    num_buckets = 2 if not striped_ring_attn else 1
+    num_buckets = 2
 
     assert not use_cuda or world_size <= torch.cuda.device_count(), 'world size must be less than the number of cuda devices'
 

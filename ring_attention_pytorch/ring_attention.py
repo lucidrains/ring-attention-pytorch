@@ -261,6 +261,8 @@ class RingAttention(Module):
         use_cuda_kernel: Optional[bool] = None
     ):
         super().__init__()
+        use_cuda_kernel = default(use_cuda_kernel, torch.cuda.is_available())
+
         self.eps = eps
         self.heads = heads
         self.scale = dim_head ** -0.5
@@ -271,8 +273,6 @@ class RingAttention(Module):
         self.ring_attn = ring_attn
         self.max_lookback_seq_len = max_lookback_seq_len
         self.striped_ring_attn = striped_ring_attn
-
-        assert not (striped_ring_attn and use_cuda_kernel and bucket_size != ring_seq_size), 'for now, striped ring attention using cuda kernel can only work with 1 bucket per machine'
 
         self.force_regular_attn = force_regular_attn
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # this should be done at the transformer level on the token ids for efficiency, but for testing purposes
@@ -337,10 +337,12 @@ class RingAttention(Module):
             x, mask = maybe_pad_seq_and_mask(x, mask, self.ring_seq_size)
 
             if self.striped_ring_attn:
-                x = rearrange('b (i j) d -> b (j i) d', x, i = self.bucket_size)
+                striped_bucket_size = self.bucket_size if self.use_cuda_kernel else self.ring_seq_size
+
+                x = rearrange('b (i j) d -> b (j i) d', x, i = striped_bucket_size)
 
                 if exists(mask):
-                    mask = rearrange('b (i j) -> b (j i)', mask, i = self.bucket_size)
+                    mask = rearrange('b (i j) -> b (j i)', mask, i = striped_bucket_size)
 
             (x, mask), batch_sizes = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
 
@@ -400,7 +402,7 @@ class RingAttention(Module):
             out, _ = sharded_seq_to_sharded_batch(out, batch_sizes)
 
             if self.striped_ring_attn:
-                out = rearrange('b (j i) d -> b (i j) d', out, i = self.bucket_size)
+                out = rearrange('b (j i) d -> b (i j) d', out, i = striped_bucket_size)
 
             out = out[:, :seq_len]
 
@@ -449,14 +451,15 @@ class RingTransformer(Module):
         use_cuda_kernel: Optional[bool] = None
     ):
         super().__init__()
+        self.use_cuda_kernel = default(use_cuda_kernel, torch.cuda.is_available())
+        assert not (use_cuda_kernel and not torch.cuda.is_available())
+
         self.ring_attn = ring_attn
         self.striped_ring_attn = striped_ring_attn
 
         self.ring_seq_size = ring_seq_size
         self.bucket_size = bucket_size
         assert divisible_by(ring_seq_size, bucket_size)
-
-        assert not (striped_ring_attn and use_cuda_kernel and bucket_size != ring_seq_size), 'for now, striped ring attention using cuda kernel can only work with 1 bucket per machine'
 
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # if ring attention is turned on, auto-shard across sequence dimension. this can also be turned off and done manually elsewhere in the data loading
 
@@ -492,7 +495,7 @@ class RingTransformer(Module):
                     ring_seq_size = ring_seq_size,
                     max_lookback_seq_len = layer_max_lookback_seq_len,
                     striped_ring_attn = striped_ring_attn,
-                    use_cuda_kernel = use_cuda_kernel,
+                    use_cuda_kernel = self.use_cuda_kernel,
                     auto_shard_seq = False,
                 ),
                 FeedForward(dim = dim, mult = ff_mult)
@@ -546,13 +549,15 @@ class RingTransformer(Module):
             # for workload balancing https://arxiv.org/abs/2311.09431 - MIT paper from Brandon et al.
 
             if self.striped_ring_attn:
-                x = rearrange('b (i j) -> b (j i)', x, i = self.bucket_size)
+                striped_bucket_size = self.bucket_size if not self.use_cuda_kernel else self.ring_seq_size
+
+                x = rearrange('b (i j) -> b (j i)', x, i = striped_bucket_size)
 
                 if exists(labels):
-                    labels = rearrange('b (i j) -> b (j i)', labels, i = self.bucket_size)
+                    labels = rearrange('b (i j) -> b (j i)', labels, i = striped_bucket_size)
 
                 if exists(mask):
-                    mask = rearrange('b (i j) -> b (j i)', mask, i = self.bucket_size)
+                    mask = rearrange('b (i j) -> b (j i)', mask, i = striped_bucket_size)
 
             # gather across batch and divide across world
 
@@ -608,6 +613,6 @@ class RingTransformer(Module):
         logits = sharded_seq_to_sharded_batch(logits, batch_sizes, num_sharded_batches)
 
         if self.striped_ring_attn:
-            logits = rearrange('b (j i) d -> b (i j) d', logits, i = self.bucket_size)
+            logits = rearrange('b (j i) d -> b (i j) d', logits, i = striped_bucket_size)
 
         return logits[:, :seq_len]

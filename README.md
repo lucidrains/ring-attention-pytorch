@@ -83,8 +83,8 @@ $ python assert.py
     - [x] cuda backwards pass must have same dq, dk, dv as naive
 - [x] fix naive flash attention backwards
 - [x] validate cuda causal and striped ring attention works
+- [x] make sure cuda striped attention works for multiple buckets, otherwise flash attention is ineffective
 
-- [ ] make sure cuda striped attention works for multiple buckets, otherwise flash attention is ineffective
 - [ ] for cuda striped attention, for backwards hack, pad the extra token once and index out when passing into Tri's cuda kernel
 - [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
