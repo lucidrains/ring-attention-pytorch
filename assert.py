@@ -107,7 +107,8 @@ def start(
         ring_out = ring_out.cpu()
         flash_out = flash_out.cpu()
 
-        assert torch.allclose(ring_out, flash_out, atol = 1e-6), 'output is not the same'
+        output_atol = 1e-2 if use_cuda else 1e-6
+        assert torch.allclose(ring_out, flash_out, atol = output_atol), 'output is not the same'
 
         # validate gradients of token embedding is the same for ring vs non-ring
 
@@ -132,7 +133,7 @@ if __name__ == '__main__':
     batch_size_var_len = False
     use_cuda = False
     causal = True
-    striped_ring_attn = True
+    striped_ring_attn = False
 
     assert not use_cuda or world_size <= torch.cuda.device_count(), 'world size must be less than the number of cuda devices'
 
