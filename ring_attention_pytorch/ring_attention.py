@@ -104,9 +104,12 @@ class RingRotaryEmbedding(Module):
     def forward(
         self,
         seq_len: int,
-        offset = 0
+        offset = 0,
+        buckets: Optional[int] = None
     ):
         device = self.device
+        buckets = default(buckets, self.buckets)
+
         pos = None
 
         if self.ring:
@@ -337,7 +340,7 @@ class RingAttention(Module):
             x, mask = maybe_pad_seq_and_mask(x, mask, self.ring_seq_size)
 
             if self.striped_ring_attn:
-                striped_bucket_size = self.bucket_size if self.use_cuda_kernel else self.ring_seq_size
+                striped_bucket_size = self.bucket_size if not self.use_cuda_kernel else self.ring_seq_size
 
                 x = rearrange('b (i j) d -> b (j i) d', x, i = striped_bucket_size)
 
@@ -522,6 +525,7 @@ class RingTransformer(Module):
         seq_len, device = x.shape[-1], x.device
 
         auto_shard_seq = not force_ring_reduce_off and self.auto_shard_seq and is_distributed()
+        using_striped_ring_cuda = x.is_cuda and self.striped_ring_attn and self.use_cuda_kernel
 
         # get labels if not passed in
 
@@ -573,7 +577,10 @@ class RingTransformer(Module):
         # rotary positions
         # taking into account ring and striping
 
-        rotary_emb = self.rotary_emb(x.shape[-1])
+        rotary_emb = self.rotary_emb(
+            x.shape[-1],
+            buckets = (1 if using_striped_ring_cuda else None)
+        )
 
         # main transformer logic
 
