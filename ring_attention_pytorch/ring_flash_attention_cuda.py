@@ -31,7 +31,10 @@ def pad_at_dim(t, pad: Tuple[int, int], *, dim = -1, value = 0.):
     zeros = ((0, 0) * dims_from_right)
     return F.pad(t, (*zeros, *pad), value = value)
 
-def is_contiguous(x):
+def is_empty(t: Tensor):
+    return t.numel() == 0
+
+def is_contiguous(x: Tensor):
     return x.stride(-1) == 1
 
 # make sure flash attention is installed for backwards
@@ -48,6 +51,23 @@ from flash_attn.flash_attn_interface import (
     _flash_attn_varlen_backward,
     _flash_attn_backward
 )
+
+from flash_attn.bert_padding import (
+    pad_input,
+    unpad_input
+)
+
+def unpad_input_and_return_inverse_fn(
+    x: Tensor,
+    mask: Tensor
+):
+    batch, seqlen, *_ = x.shape
+    out, indices, cu_seqlens, max_seqlen = unpad_input(x, m)
+
+    def inverse_fn(y):
+        return pad_input(y, indices, batch, seqlen)
+
+    return out, cu_seqlens, max_seqlen, inverse_fn
 
 # make sure triton is installed for forwards
 
@@ -657,6 +677,18 @@ class RingFlashAttentionCUDAFunction(Function):
             do = pad_at_dim(do, (0, 1), dim = 1)
             lse = pad_at_dim(lse, (0, 1), dim = -1)
 
+        # if not causal and has key padding mask
+        # prepare row related tensors with unpad_input
+
+        if not causal and exists(mask):
+            q, cu_seqlens_q, max_seqlen_q, repad_q = unpad_input_and_return_inverse_fn(q, mask)
+            do, *_ = unpad_input(do, mask)
+            o, *_ = unpad_input(o, mask)
+
+            lse = rearrange(lse, 'b h n ... -> b n h ...')
+            lse, *_ = unpad_input(lse, mask)
+            lse = rearrange(lse, 'b n h ... -> b h n ...')
+
         for (ring_rank, _), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             kv, dk, dv = kv_and_dkv
@@ -720,28 +752,39 @@ class RingFlashAttentionCUDAFunction(Function):
                 lse = lse[..., :row_length]
 
             else:
-                raise NotImplementedError
 
-                ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
-                    dout = do,
-                    q = q,
-                    k = k,
-                    v = v,
-                    out = o,
-                    softmax_lse = lse,
-                    dq = torch.zeros_like(q),
-                    dk = torch.zeros_like(k),
-                    dv = torch.zeros_like(v),
-                    cu_seqlens_q = None,
-                    cu_seqlens_k = None,
-                    max_seqlen_q = None,
-                    max_seqlen_k = None,
-                    softmax_scale = softmax_scale,
-                    causal = False,
-                    window_size = (-1, -1),
-                    alibi_slopes = None,
-                    deterministic = False
-                )
+                k, cu_seqlens_k, cu_maxlen_k, repad_kv = unpad_input_and_return_inverse_fn(k, mask)
+                v, *_ = unpad_input(v, mask)
+
+                if not is_empty(q) and not is_empty(k):
+                    ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
+                        dout = do,
+                        q = q,
+                        k = k,
+                        v = v,
+                        out = o,
+                        softmax_lse = lse,
+                        dq = torch.empty_like(q),
+                        dk = torch.empty_like(k),
+                        dv = torch.empty_like(v),
+                        cu_seqlens_q = cu_seqlens_q,
+                        cu_seqlens_k = cu_seqlens_k,
+                        max_seqlen_q = max_seqlen_q,
+                        max_seqlen_k = max_seqlen_k,
+                        dropout_p = 0.,
+                        softmax_scale = softmax_scale,
+                        causal = False,
+                        window_size = (-1, -1),
+                        alibi_slopes = None,
+                        deterministic = False
+                    )
+
+                    ring_dq = repad_q(ring_dq)
+                    ring_dk = repad_kv(ring_dk)
+                    ring_dv = repad_kv(ring_dv)
+
+                else:
+                    ring_dq, ring_dk, ring_dv = 0., 0., 0.
 
             dq.add_(ring_dq)
             dk.add_(ring_dk)
