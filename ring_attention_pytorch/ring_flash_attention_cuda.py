@@ -354,7 +354,7 @@ def flash_attn_forward(
         if not is_contiguous(bias):
             bias = bias.contiguous()
 
-        assert bias.shape[-2:] == (1, seqlen_k)
+        assert bias.shape[-2:] == (seqlen_q, seqlen_k)
         bias = bias.expand(batch, nheads, seqlen_q, seqlen_k)
 
     bias_strides = (bias.stride(0), bias.stride(1), bias.stride(2)) if has_bias else (0, 0, 0)
@@ -457,7 +457,7 @@ class RingFlashAttentionCUDAFunction(Function):
         max_lookback_seq_len: Optional[int],
         ring_size: Optional[int]
     ):
-        assert causal, 'non-causal is not supported yet for ring (striped) flash attention'
+        assert not exists(mask), 'key padding mask is not supported yet for ring flash attn cuda'
 
         assert all([t.is_cuda for t in (q, k, v)]), 'inputs must be all on cuda'
 
@@ -561,15 +561,11 @@ class RingFlashAttentionCUDAFunction(Function):
                 bias = bias,
                 softmax_scale = softmax_scale,
                 causal_mask_diagonal = causal_mask_diagonal,
-                return_normalized_output = False,
+                return_normalized_output = is_last,
                 load_accumulated = not is_first
             )
 
         lse = lse[..., :q_seq_len]
-        m = m[..., :q_seq_len]
-
-        o_scale = torch.exp(m - lse)
-        o.mul_(rearrange('b h n -> b n h 1', o_scale))
 
         ctx.args = (
             causal,
