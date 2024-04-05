@@ -26,6 +26,9 @@ from einx import rearrange
 def exists(v):
     return v is not None
 
+def first(seq):
+    return seq[0]
+
 def pad_at_dim(t, pad: Tuple[int, int], *, dim = -1, value = 0.):
     dims_from_right = (- dim - 1) if dim < 0 else (t.ndim - dim - 1)
     zeros = ((0, 0) * dims_from_right)
@@ -57,17 +60,24 @@ from flash_attn.bert_padding import (
     unpad_input
 )
 
-def unpad_input_and_return_inverse_fn(
-    x: Tensor,
+@beartype
+def unpad_inputs_and_return_inverse_fn(
+    tensors: Tuple[Tensor, ...],
     mask: Tensor
 ):
-    batch, seqlen, *_ = x.shape
-    out, indices, cu_seqlens, max_seqlen = unpad_input(x, m)
+    assert len(tensors) > 0
+    batch, seqlen, *_ = first(tensors).shape
+
+    outs = []
+
+    for tensor in tensors:
+        out, indices, cu_seqlens, max_seqlen = unpad_input(x, m)
+        outs.append(out)
 
     def inverse_fn(y):
         return pad_input(y, indices, batch, seqlen)
 
-    return out, cu_seqlens, max_seqlen, inverse_fn
+    return tuple(outs), cu_seqlens, max_seqlen, inverse_fn
 
 # make sure triton is installed for forwards
 
@@ -681,13 +691,17 @@ class RingFlashAttentionCUDAFunction(Function):
         # prepare row related tensors with unpad_input
 
         if not causal and exists(mask):
-            q, cu_seqlens_q, max_seqlen_q, repad_q = unpad_input_and_return_inverse_fn(q, mask)
-            do, *_ = unpad_input(do, mask)
-            o, *_ = unpad_input(o, mask)
-
             lse = rearrange(lse, 'b h n ... -> b n h ...')
-            lse, *_ = unpad_input(lse, mask)
-            lse = rearrange(lse, 'b n h ... -> b h n ...')
+
+            (
+                (q, o, do, lse),
+                cu_seqlens_q,
+                max_seqlen_q,
+                repad_q
+            ) = unpad_inputs_and_return_inverse_fn(
+                (q, o, do, lse),
+                mask
+            )
 
         for (ring_rank, _), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
@@ -753,8 +767,15 @@ class RingFlashAttentionCUDAFunction(Function):
 
             else:
 
-                k, cu_seqlens_k, cu_maxlen_k, repad_kv = unpad_input_and_return_inverse_fn(k, mask)
-                v, *_ = unpad_input(v, mask)
+                (
+                    (k, v),
+                    cu_seqlens_k,
+                    cu_maxlen_k,
+                    repad_kv
+                ) = unpad_inputs_and_return_inverse_fn(
+                    (k, v),
+                    mask
+                )
 
                 if not is_empty(q) and not is_empty(k):
                     ring_dq, ring_dk, ring_dv, *_ = _flash_attn_varlen_backward(
