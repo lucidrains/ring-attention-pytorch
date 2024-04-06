@@ -40,6 +40,13 @@ def is_empty(t: Tensor):
 def is_contiguous(x: Tensor):
     return x.stride(-1) == 1
 
+def padded_false_on_right_side(t: Tensor):
+    if t.shape[-1] <= 1:
+        return True
+
+    false_to_true = ~t[..., :-1] & t[..., 1:]
+    return not false_to_true.any()
+
 # make sure flash attention is installed for backwards
 
 import importlib
@@ -488,6 +495,7 @@ class RingFlashAttentionCUDAFunction(Function):
         ring_size: Optional[int]
     ):
         assert all([t.is_cuda for t in (q, k, v)]), 'inputs must be all on cuda'
+        assert not exists(mask) or padded_false_on_right_side(mask), 'key padding mask must only contain True (attend) on the left hand side, and False (not attend) on the right'
 
         dtype = q.dtype
         softmax_scale = q.shape[-1] ** -0.5
