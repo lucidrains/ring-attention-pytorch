@@ -54,7 +54,8 @@ def all_gather_variable_dim(t, dim = 0, sizes = None):
     gathered_tensors = torch.cat(gathered_tensors, dim = dim)
     seq = torch.arange(max_size, device = device)
 
-    mask = einx.less('j, i -> (i j)', seq, sizes)
+    mask = seq[None, :] < sizes[:, None]
+    mask = rearrange(mask, 'i j -> (i j)')
     seq = torch.arange(mask.shape[-1], device = device)
     indices = seq[mask]
 

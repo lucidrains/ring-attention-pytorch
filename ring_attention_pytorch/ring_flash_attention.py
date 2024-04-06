@@ -6,8 +6,7 @@ import torch
 from torch import nn, einsum, Tensor
 from torch.autograd.function import Function
 
-import einx
-from einx import rearrange
+from einops import rearrange
 
 from ring_attention_pytorch.ring import (
     ring_pass,
@@ -149,7 +148,8 @@ class RingFlashAttentionFunction(Function):
                     attn_weights = einsum('b i h d, b j h d -> b h i j', qc, kc) * scale
 
                     if exists(col_mask):
-                        attn_weights = einx.where('b j, b h i j, -> b h i j', col_mask, attn_weights, max_neg_value)
+                        col_mask_unsqueezed = rearrange(col_mask, 'b j -> b 1 1 j')
+                        attn_weights = attn_weights.masked_fill(~col_mask_unsqueezed, max_neg_value)
 
                     if causal:
                         qk_len_diff = kc.shape[-3] - qc.shape[-3]
@@ -177,7 +177,7 @@ class RingFlashAttentionFunction(Function):
                     exp_weights = torch.exp(attn_weights - new_row_maxes)
 
                     if exists(col_mask):
-                        exp_weights = einx.where('b j, b h i j, -> b h i j', col_mask, exp_weights, 0.)
+                        exp_weights = exp_weights.masked_fill(~col_mask_unsqueezed, 0.)
 
                     block_row_sums = exp_weights.sum(dim = -1, keepdims = True).clamp(min = EPSILON)
 
@@ -187,13 +187,13 @@ class RingFlashAttentionFunction(Function):
 
                     new_row_sums = exp_row_max_diff * row_sums + block_row_sums
 
-                    exp_row_max_diff = rearrange('b h n 1 -> b n h 1', exp_row_max_diff)
+                    exp_row_max_diff = rearrange(exp_row_max_diff, 'b h n 1 -> b n h 1')
                     oc.mul_(exp_row_max_diff).add_(exp_values)
 
                     row_maxes.copy_(new_row_maxes)
                     row_sums.copy_(new_row_sums)
 
-        o.div_(rearrange('b h n 1 -> b n h 1', all_row_sums))
+        o.div_(rearrange(all_row_sums, 'b h n 1 -> b n h 1'))
 
         lse = all_row_sums.clamp(min = EPSILON).log() + all_row_maxes
 
@@ -305,13 +305,14 @@ class RingFlashAttentionFunction(Function):
                     p = torch.exp(attn_weights - lsec)
 
                     if exists(col_mask):
-                        p = einx.where('b j, b h i j, -> b h i j', col_mask, p, 0.)
+                        col_mask_unsqueezed = rearrange(col_mask, 'b j -> b 1 1 j')
+                        p = p.masked_fill(~col_mask_unsqueezed, 0.)
 
                     dv_chunk = einsum('b h i j, b i h d -> b j h d', p, doc)
                     dp = einsum('b i h d, b j h d -> b h i j', doc, vc)
 
                     D = (doc * oc).sum(dim = -1, keepdims = True)
-                    D = rearrange('b n h 1 -> b h n 1', D)
+                    D = rearrange(D, 'b n h 1 -> b h n 1')
                     ds = p * scale * (dp - D)
 
                     dq_chunk = einsum('b h i j, b j h d -> b i h d', ds, kc)

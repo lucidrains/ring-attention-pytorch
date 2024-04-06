@@ -6,8 +6,7 @@ import torch.nn.functional as F
 from torch.cuda.amp import autocast
 from torch.nn import Module, ModuleList
 
-import einx
-from einx import rearrange
+from einops import rearrange, repeat
 
 from beartype import beartype
 
@@ -65,11 +64,12 @@ def default_attention(
         sim = torch.where(causal_mask, mask_value, sim)
 
     elif exists(mask):
-        sim = einx.where('b j, b h i j, -> b h i j', mask, sim, mask_value)
+        mask = rearrange(mask, 'b j -> b 1 1 j')
+        sim = sim.masked_fill(~mask, mask_value)
 
     # attend
 
-    attn = einx.softmax('b h i [j]', sim)
+    attn = sim.softmax(dim = -1)
 
     # aggregate
 
@@ -119,11 +119,11 @@ class RingRotaryEmbedding(Module):
                 ring_stride = get_world_size() * buckets
 
                 pos = torch.arange(seq_len // buckets, device = device)
-                pos = rearrange('n -> n b', pos, b = buckets)
+                pos = repeat(pos, 'n -> n b', b = buckets)
 
                 pos = pos * ring_stride
                 pos += torch.arange(buckets, device = device) + (get_rank() * buckets)
-                pos = rearrange('n b -> (b n)', pos)
+                pos = rearrange(pos, 'n b -> (b n)')
 
             else:
                 pos = torch.arange(seq_len, device = device)
@@ -132,7 +132,7 @@ class RingRotaryEmbedding(Module):
             pos = torch.arange(seq_len, device = device)
 
         pos = pos.type_as(self.inv_freq)
-        freqs = torch.einsum('i , j -> i j', pos, self.inv_freq)
+        freqs = einsum('i , j -> i j', pos, self.inv_freq)
         return torch.cat((freqs, freqs), dim = -1)
 
 def rotate_half(x):
@@ -141,7 +141,7 @@ def rotate_half(x):
 
 @autocast(enabled = False)
 def apply_rotary_pos_emb(pos, t):
-    pos = rearrange('n d -> n 1 d', pos)
+    pos = rearrange(pos, 'n d -> n 1 d')
     return t * pos.cos() + rotate_half(t) * pos.sin()
 
 # batch to sequence sharding and back
@@ -207,7 +207,7 @@ def sharded_batch_to_sharded_seq(
 
     num_sharded_batches = world_size // total_split_seq
 
-    x = rearrange('(b s) n -> b (s n)', x, s = num_sharded_batches)
+    x = rearrange(x, '(b s) n -> b (s n)', s = num_sharded_batches)
 
     # then split sequence across machines
 
@@ -216,7 +216,7 @@ def sharded_batch_to_sharded_seq(
     x, _ = split_by_rank(x)
 
     if exists(mask):
-        mask = rearrange('(b s) n -> b (s n)', mask, s = num_sharded_batches)
+        mask = rearrange(mask, '(b s) n -> b (s n)', s = num_sharded_batches)
         mask = mask.split(seq_size, dim = -1)
         mask, _ = split_by_rank(mask)
 
@@ -231,7 +231,7 @@ def sharded_seq_to_sharded_batch(
 
     logits, _ = all_gather(logits)
 
-    logits = rearrange('b (s n) c -> (b s) n c', logits, s = num_sharded_batches)
+    logits = rearrange(logits, 'b (s n) c -> (b s) n c', s = num_sharded_batches)
 
     logits = logits.split(sizes.tolist(), dim = 0)
 
@@ -344,17 +344,17 @@ class RingAttention(Module):
             x, mask = maybe_pad_seq_and_mask(x, mask, self.ring_seq_size)
 
             if self.striped_ring_attn:
-                x = rearrange('b (i j) d -> b (j i) d', x, i = striped_bucket_size)
+                x = rearrange(x, 'b (i j) d -> b (j i) d', i = striped_bucket_size)
 
                 if exists(mask):
-                    mask = rearrange('b (i j) -> b (j i)', mask, i = striped_bucket_size)
+                    mask = rearrange(mask, 'b (i j) -> b (j i)', i = striped_bucket_size)
 
             (x, mask), batch_sizes = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
 
         device = x.device
 
         qkv = self.to_qkv(x)
-        q, k, v = rearrange('b n (qkv h d) -> qkv b n h d', qkv, qkv = 3, h = self.heads)
+        q, k, v = rearrange(qkv, 'b n (qkv h d) -> qkv b n h d', qkv = 3, h = self.heads)
 
         # rotary relative positions
 
@@ -400,7 +400,7 @@ class RingAttention(Module):
 
         # combine heads
 
-        out = rearrange('b n h d -> b n (h d)', out)
+        out = rearrange(out, 'b n h d -> b n (h d)')
         out = self.to_out(out)
 
         if auto_shard_seq:
@@ -561,13 +561,13 @@ class RingTransformer(Module):
             # for workload balancing https://arxiv.org/abs/2311.09431 - MIT paper from Brandon et al.
 
             if self.striped_ring_attn:
-                x = rearrange('b (i j) -> b (j i)', x, i = striped_bucket_size)
+                x = rearrange(x, 'b (i j) -> b (j i)', i = striped_bucket_size)
 
                 if exists(labels):
-                    labels = rearrange('b (i j) -> b (j i)', labels, i = striped_bucket_size)
+                    labels = rearrange(labels, 'b (i j) -> b (j i)', i = striped_bucket_size)
 
                 if exists(mask):
-                    mask = rearrange('b (i j) -> b (j i)', mask, i = striped_bucket_size)
+                    mask = rearrange(mask, 'b (i j) -> b (j i)', i = striped_bucket_size)
 
             # gather across batch and divide across world
 
@@ -605,7 +605,7 @@ class RingTransformer(Module):
         # handle returning of loss
 
         if return_loss:
-            logits = rearrange('b n c -> b c n', logits)
+            logits = rearrange(logits, 'b n c -> b c n')
 
             ce_loss = F.cross_entropy(
                 logits,
@@ -623,6 +623,6 @@ class RingTransformer(Module):
         logits = sharded_seq_to_sharded_batch(logits, batch_sizes, num_sharded_batches)
 
         if self.striped_ring_attn:
-            logits = rearrange('b (j i) d -> b (i j) d', logits, i = striped_bucket_size)
+            logits = rearrange(logits, 'b (j i) d -> b (i j) d', i = striped_bucket_size)
 
         return logits[:, :seq_len]
