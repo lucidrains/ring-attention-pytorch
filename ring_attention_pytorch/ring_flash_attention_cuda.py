@@ -71,7 +71,7 @@ def unpad_inputs_and_return_inverse_fn(
     outs = []
 
     for tensor in tensors:
-        out, indices, cu_seqlens, max_seqlen = unpad_input(x, m)
+        out, indices, cu_seqlens, max_seqlen = unpad_input(tensor, mask)
         outs.append(out)
 
     def inverse_fn(y):
@@ -487,8 +487,6 @@ class RingFlashAttentionCUDAFunction(Function):
         max_lookback_seq_len: Optional[int],
         ring_size: Optional[int]
     ):
-        assert not (not causal and exists(mask)), 'key padding mask is not supported yet for ring flash attn cuda'
-
         assert all([t.is_cuda for t in (q, k, v)]), 'inputs must be all on cuda'
 
         dtype = q.dtype
@@ -691,12 +689,12 @@ class RingFlashAttentionCUDAFunction(Function):
         # prepare row related tensors with unpad_input
 
         if not causal and exists(mask):
-            lse = rearrange(lse, 'b h n ... -> b n h ...')
+            lse = rearrange('b h n ... -> b n h ...', lse)
 
             (
                 (q, o, do, lse),
                 cu_seqlens_q,
-                max_seqlen_q,
+                cu_maxlen_q,
                 repad_q
             ) = unpad_inputs_and_return_inverse_fn(
                 (q, o, do, lse),
@@ -790,8 +788,8 @@ class RingFlashAttentionCUDAFunction(Function):
                         dv = torch.empty_like(v),
                         cu_seqlens_q = cu_seqlens_q,
                         cu_seqlens_k = cu_seqlens_k,
-                        max_seqlen_q = max_seqlen_q,
-                        max_seqlen_k = max_seqlen_k,
+                        max_seqlen_q = cu_maxlen_q,
+                        max_seqlen_k = cu_maxlen_k,
                         dropout_p = 0.,
                         softmax_scale = softmax_scale,
                         causal = False,
