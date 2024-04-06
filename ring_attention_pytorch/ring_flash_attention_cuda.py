@@ -27,6 +27,12 @@ from einops import rearrange, repeat
 def exists(v):
     return v is not None
 
+def default(val, d):
+    return val if exists(val) else d
+
+def divisible_by(num, den):
+    return (num % den) == 0
+
 def first(seq):
     return seq[0]
 
@@ -460,17 +466,6 @@ def flash_attn_forward(
     )
 
     return o, m, lse
-
-# helper functions
-
-def exists(val):
-    return val is not None
-
-def default(val, d):
-    return val if exists(val) else d
-
-def divisible_by(num, den):
-    return (num % den) == 0
 
 # ring + (flash) attention forwards and backwards
 
