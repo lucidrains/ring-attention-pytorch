@@ -7,6 +7,7 @@ import torch
 from torch import nn, einsum, Tensor
 import torch.nn.functional as F
 from torch.autograd.function import Function
+from torch.cuda.amp import autocast
 
 from ring_attention_pytorch.ring import (
     ring_pass,
@@ -481,6 +482,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
     @staticmethod
     @torch.no_grad()
+    @autocast(enabled = False)
     def forward(
         ctx,
         q: Tensor,
@@ -629,6 +631,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
     @staticmethod
     @torch.no_grad()
+    @autocast(enabled = False)
     def backward(ctx, do):
         """ Algorithm 2 in the v2 paper """
 
