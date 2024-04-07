@@ -557,6 +557,10 @@ class RingFlashAttentionCUDAFunction(Function):
         receive_kv = None
         receive_mask = None
 
+        # non-causal and causal striped attention can have final normalization of output fused
+
+        can_fuse_final_output_normalization = not causal or (causal and striped_ring_attn)
+
         for (ring_rank, (is_first, is_last)), ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
             k, v = kv
 
@@ -593,15 +597,17 @@ class RingFlashAttentionCUDAFunction(Function):
                 bias = bias,
                 softmax_scale = softmax_scale,
                 causal_mask_diagonal = causal_mask_diagonal,
-                return_normalized_output = False,
+                return_normalized_output = can_fuse_final_output_normalization and is_last,
                 load_accumulated = not is_first
             )
 
         lse = lse[..., :q_seq_len]
-        m = m[..., :q_seq_len]
 
-        o_scale = torch.exp(m - lse)
-        o.mul_(rearrange(o_scale, 'b h n -> b n h 1'))
+        if not can_fuse_final_output_normalization:
+            m = m[..., :q_seq_len]
+
+            o_scale = torch.exp(m - lse)
+            o.mul_(rearrange(o_scale, 'b h n -> b n h 1'))
 
         ctx.args = (
             causal,
