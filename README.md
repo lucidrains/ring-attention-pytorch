@@ -93,11 +93,10 @@ $ python assert.py --use-cuda --causal --striped-ring-attn
 - [x] validate cuda causal and striped ring attention works
 - [x] make sure cuda striped attention works for multiple buckets, otherwise flash attention is ineffective
 - [x] for cuda striped attention, for backwards hack, pad the extra token once and index out when passing into Tri's cuda kernel
+- [x] find a machine with 8 GPUs and test with a quarter million tokens first
 
-- [ ] find a machine with 8 GPUs and test with a quarter million tokens first
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
-- [ ] `batch_isend_irecv` in the presence of key padding mask needing ring exchange, but not a big priority
 - [ ] figure out how to pytest distributed pytorch
 - [ ] use sdp context manager to validate when it is possible to use `ring_flash_attn_cuda`, otherwise assert out
 
