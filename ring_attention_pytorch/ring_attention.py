@@ -275,7 +275,7 @@ class RingAttention(Module):
         self.scale = dim_head ** -0.5
         self.causal = causal
 
-        assert divisible_by(ring_seq_size, bucket_size)
+        assert (not ring_attn) or divisible_by(ring_seq_size, bucket_size), f'ring seq size {ring_seq_size} is not divisible by bucket size {bucket_size}'
 
         self.ring_attn = ring_attn
         self.max_lookback_seq_len = max_lookback_seq_len
@@ -468,7 +468,8 @@ class RingTransformer(Module):
 
         self.ring_seq_size = ring_seq_size
         self.bucket_size = bucket_size
-        assert divisible_by(ring_seq_size, bucket_size)
+
+        assert (not ring_attn) or divisible_by(ring_seq_size, bucket_size), f'ring seq size {ring_seq_size} is not divisible by bucket size {bucket_size}'
 
         self.auto_shard_seq = default(auto_shard_seq, ring_attn) # if ring attention is turned on, auto-shard across sequence dimension. this can also be turned off and done manually elsewhere in the data loading
 

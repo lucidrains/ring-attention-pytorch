@@ -65,6 +65,7 @@ def start(
         depth = 2,
         dim_head = 8,
         ring_attn = False,
+        ring_seq_size = ring_seq_size,
         bucket_size = bucket_size,
         use_cuda_kernel = False
     )
