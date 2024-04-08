@@ -767,12 +767,6 @@ class RingFlashAttentionCUDAFunction(Function):
 
                 else:
                     ring_dq, ring_dk, ring_dv = 0., 0., 0.
-
-                q = q[:, :row_length]
-                o = o[:, :row_length]
-                do = do[:, :row_length]
-                lse = lse[..., :row_length]
-
             else:
 
                 (
