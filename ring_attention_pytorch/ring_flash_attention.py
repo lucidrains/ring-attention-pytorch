@@ -256,6 +256,13 @@ class RingFlashAttentionFunction(Function):
         receive_kv_and_dkv = None
         receive_mask = None
 
+        # precompute the softmax D
+
+        D = (do * o).sum(dim = -1, keepdims = True)
+        D = rearrange(D, 'b n h 1 -> b h n 1')
+
+        # ring reduce key / values
+
         for (ring_rank, _), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
             k_ring_rank = ring_rank % ring_size
 
@@ -274,13 +281,13 @@ class RingFlashAttentionFunction(Function):
 
                 row_splits = zip(
                     q.split(bucket_size, dim = 1),
-                    o.split(bucket_size, dim = 1),
                     do.split(bucket_size, dim = 1),
+                    D.split(bucket_size, dim = -2),
                     lse.split(bucket_size, dim = -2),
                     dq.split(bucket_size, dim = 1)
                 )
 
-                for ind, (qc, oc, doc, lsec, dqc) in enumerate(row_splits):
+                for ind, (qc, doc, Dc, lsec, dqc) in enumerate(row_splits):
                     row_bucket_index = row_ring_rank * per_machine_buckets + ind
 
                     attn_weights = einsum('b i h d, b j h d -> b h i j', qc, kc) * scale
@@ -311,9 +318,7 @@ class RingFlashAttentionFunction(Function):
                     dv_chunk = einsum('b h i j, b i h d -> b j h d', p, doc)
                     dp = einsum('b i h d, b j h d -> b h i j', doc, vc)
 
-                    D = (doc * oc).sum(dim = -1, keepdims = True)
-                    D = rearrange(D, 'b n h 1 -> b h n 1')
-                    ds = p * scale * (dp - D)
+                    ds = p * scale * (dp - Dc)
 
                     dq_chunk = einsum('b h i j, b j h d -> b i h d', ds, kc)
                     dk_chunk = einsum('b h i j, b i h d -> b j h d', ds, qc)

@@ -99,6 +99,7 @@ $ python assert.py --use-cuda --causal --striped-ring-attn
 - [x] for cuda striped attention, for backwards hack, pad the extra token once and index out when passing into Tri's cuda kernel
 - [x] find a machine with 8 GPUs and test with a quarter million tokens first
 
+- [ ] see for cuda version whether softmax_D can be computed once and cached over the ring reduce. go for modified triton backwards if not
 - [ ] think about how to craft a special `Dataset` that shards across sequence length (take into account labels for cross entropy loss) for ring transformer training
 - [ ] add ring attention to Tri's flash attention implementation. find some cuda ring reduce impl
 - [ ] figure out how to pytest distributed pytorch
