@@ -7,7 +7,7 @@ import torch.multiprocessing as mp
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from ring_attention_pytorch.ring_attention import RingTransformer
+from ring_attention_pytorch.ring_attention import RingAttention
 from ring_attention_pytorch.distributed import all_gather_variable_dim
 
 def setup(
@@ -46,23 +46,21 @@ def start(
     ring_seq_size = ceil(seq_len / world_size) * num_sharded_batches
     bucket_size = ring_seq_size // num_buckets
 
-    ring_attention_net = RingTransformer(
-        num_tokens = 256,
+    ring_attention = RingAttention(
         dim = dim,
         causal = causal,
-        depth = 2,
         dim_head = 8,
         ring_attn = True,
         striped_ring_attn = striped_ring_attn,
         ring_seq_size = ring_seq_size,
-        bucket_size = bucket_size
+        bucket_size = bucket_size,
+        use_cuda_kernel = use_cuda,
+        auto_shard_seq = True
     )
 
-    flash_attention_net = RingTransformer(
-        num_tokens = 256,
+    flash_attention = RingAttention(
         dim = dim,
         causal = causal,
-        depth = 2,
         dim_head = 8,
         ring_attn = False,
         ring_seq_size = ring_seq_size,
@@ -71,12 +69,12 @@ def start(
         use_cuda_kernel = False
     )
 
-    flash_attention_net.load_state_dict(ring_attention_net.state_dict())
+    flash_attention.load_state_dict(ring_attention.state_dict())
 
     if batch_size_var_len:
         batch_size = batch_size + rank
 
-    seq = torch.randint(0, 256, (batch_size, seq_len))
+    seq = torch.randn(batch_size, seq_len, dim)
 
     # move to cuda if needed
 
@@ -85,20 +83,25 @@ def start(
         flash_attention_net.cuda(rank)
         ring_attention_net.cuda(rank)
 
+    # separate inputs for ring vs flash
+
+    flash_input = seq.clone().requires_grad_()
+    ring_input = seq.clone().requires_grad_()
+
     # wrap
 
-    ddp_ring_attention_net = DDP(ring_attention_net)
-    ddp_flash_attention_net = DDP(flash_attention_net)
+    ddp_ring_attention = DDP(ring_attention)
+    ddp_flash_attention = DDP(flash_attention)
 
     # flash
 
-    flash_out = ddp_flash_attention_net(seq)
+    flash_out = ddp_flash_attention(flash_input)
 
     flash_out.mean().backward()
 
     # ring
 
-    ring_out = ddp_ring_attention_net(seq)
+    ring_out = ddp_ring_attention(ring_input)
 
     ring_out.mean().backward()
 
@@ -106,8 +109,8 @@ def start(
 
     if rank == 0:
 
-        ring_attention_net = ring_attention_net.cpu()
-        flash_attention_net = flash_attention_net.cpu()
+        ring_attention = ring_attention.cpu()
+        flash_attention = flash_attention.cpu()
         ring_out = ring_out.cpu()
         flash_out = flash_out.cpu()
 
@@ -117,13 +120,12 @@ def start(
 
         # validate gradients of token embedding is the same for ring vs non-ring
 
-        get_embed_grad = lambda model: model.token_emb.weight.grad
-        ring_embed_grad = get_embed_grad(ring_attention_net)
-        flash_embed_grad = get_embed_grad(flash_attention_net)
+        ring_input_grad = ring_input.grad
+        flash_input_grad = flash_input.grad
 
         assert torch.allclose(
-            ring_embed_grad,
-            flash_embed_grad,
+            ring_input_grad,
+            flash_input_grad,
             atol = 1e-2
         ), 'grad is not the same'
 

@@ -146,26 +146,38 @@ def apply_rotary_pos_emb(pos, t):
 
 # batch to sequence sharding and back
 
+def pad_at_dim(
+    t: Tensor,
+    pad: Tuple[int, int],
+    *,
+    dim = -1,
+    value = 0.
+):
+    dims_from_right = (- dim - 1) if dim < 0 else (t.ndim - dim - 1)
+    zeros = ((0, 0) * dims_from_right)
+    return F.pad(t, (*zeros, *pad), value = value)
+
 def pad_to_multiple(
     x: Tensor,
     length: int,
     pad_value = 0
 ):
-    seq_len = x.shape[-1]
+    seq_len = x.shape[1]
     remainder = seq_len % length
 
     if remainder == 0:
         return x, 0
 
     pad_length = length - remainder
-    return F.pad(x, (0, pad_length), value = pad_value), pad_length
+    return pad_at_dim(x, (0, pad_length), value = pad_value, dim = 1), pad_length
 
 def maybe_pad_seq_and_mask(
     x: Tensor,
     mask: Optional[Tensor],
     seq_size: int
 ):
-    orig_x, seq_len = x, x.shape[-1]
+    orig_x, shape = x, x.shape[:2]
+    seq_len = shape[-1]
 
     # auto pad sequence and mask, as ring passing makes assumption tensor is all same shape
 
@@ -175,7 +187,7 @@ def maybe_pad_seq_and_mask(
         return x, mask
 
     if not exists(mask):
-        mask = torch.ones_like(orig_x).bool()
+        mask = torch.ones(shape).bool()
 
     mask, _ = pad_to_multiple(mask, seq_size, pad_value = False)
 
@@ -201,17 +213,17 @@ def sharded_batch_to_sharded_seq(
 
     world_size = get_world_size()
 
-    total_split_seq = x.shape[-1] // seq_size
+    total_split_seq = x.shape[1] // seq_size
 
     assert divisible_by(world_size, total_split_seq)
 
     num_sharded_batches = world_size // total_split_seq
 
-    x = rearrange(x, '(b s) n -> b (s n)', s = num_sharded_batches)
+    x = rearrange(x, '(b s) n ... -> b (s n) ...', s = num_sharded_batches)
 
     # then split sequence across machines
 
-    x = x.split(seq_size, dim = -1)
+    x = x.split(seq_size, dim = 1)
 
     x, _ = split_by_rank(x)
 
@@ -338,7 +350,7 @@ class RingAttention(Module):
         using_striped_ring_cuda = x.is_cuda and self.using_striped_ring_cuda
         striped_bucket_size = self.bucket_size if not using_striped_ring_cuda else self.ring_seq_size
 
-        seq_len = x.shape[-1]
+        seq_len = x.shape[1]
 
         if auto_shard_seq:
             x, mask = maybe_pad_seq_and_mask(x, mask, self.ring_seq_size)
@@ -349,7 +361,7 @@ class RingAttention(Module):
                 if exists(mask):
                     mask = rearrange(mask, 'b (i j) -> b (j i)', i = striped_bucket_size)
 
-            (x, mask), batch_sizes = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
+            (x, mask), batch_sizes, num_sharded_batches = sharded_batch_to_sharded_seq(x, mask, self.ring_seq_size)
 
         device = x.device
 
@@ -404,10 +416,10 @@ class RingAttention(Module):
         out = self.to_out(out)
 
         if auto_shard_seq:
-            out, _ = sharded_seq_to_sharded_batch(out, batch_sizes)
+            out = sharded_seq_to_sharded_batch(out, batch_sizes, num_sharded_batches)
 
             if self.striped_ring_attn:
-                out = rearrange('b (j i) d -> b (i j) d', out, i = striped_bucket_size)
+                out = rearrange(out, 'b (j i) d -> b (i j) d', i = striped_bucket_size)
 
             out = out[:, :seq_len]
 
@@ -453,6 +465,7 @@ class RingTransformer(Module):
         max_lookback_seq_len: Optional[Union[Tuple[int, ...], int]] = None,
         rotary_embed_theta: int = 10000,    # will need to be changed for the million token context
         ignore_index: int = -1,
+        force_regular_attn: bool = False,
         use_cuda_kernel: Optional[bool] = None
     ):
         super().__init__()
@@ -505,6 +518,7 @@ class RingTransformer(Module):
                     ring_seq_size = ring_seq_size,
                     max_lookback_seq_len = layer_max_lookback_seq_len,
                     striped_ring_attn = striped_ring_attn,
+                    force_regular_attn = force_regular_attn,
                     use_cuda_kernel = self.use_cuda_kernel,
                     auto_shard_seq = False,
                 ),
