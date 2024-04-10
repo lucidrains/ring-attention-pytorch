@@ -12,19 +12,23 @@ from ring_attention_pytorch import (
 @click.command()
 @click.option('--causal', is_flag = True)
 @click.option('--seq-len', default = 62)
+@click.option('--dim-head', default = 16)
+@click.option('--heads', default = 2)
 @click.option('--bucket_size', default = 4)
 @click.option('--flash-cuda-kernel', is_flag = True)
 def test(
     causal: bool,
     seq_len: int,
+    dim_head: int,
+    heads: int,
     bucket_size: int,
     flash_cuda_kernel: bool
 ):
     # base qkv
 
-    q = torch.randn(2, seq_len, 2, 16)
-    k = torch.randn(2, seq_len, 2, 16)
-    v = torch.randn(2, seq_len, 2, 16)
+    q = torch.randn(2, seq_len, heads, dim_head)
+    k = torch.randn(2, seq_len, heads, dim_head)
+    v = torch.randn(2, seq_len, heads, dim_head)
 
     # flash and regular qkv's
 

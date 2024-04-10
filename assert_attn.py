@@ -38,6 +38,7 @@ def start(
     causal,
     striped_ring_attn,
     dim,
+    dim_head,
     use_cuda,
     compare_regular_attn
 ):
@@ -49,7 +50,7 @@ def start(
     ring_attention = RingAttention(
         dim = dim,
         causal = causal,
-        dim_head = 8,
+        dim_head = dim_head,
         ring_attn = True,
         striped_ring_attn = striped_ring_attn,
         ring_seq_size = ring_seq_size,
@@ -61,7 +62,7 @@ def start(
     flash_attention = RingAttention(
         dim = dim,
         causal = causal,
-        dim_head = 8,
+        dim_head = dim_head,
         ring_attn = False,
         ring_seq_size = ring_seq_size,
         bucket_size = bucket_size,
@@ -80,8 +81,8 @@ def start(
 
     if use_cuda:
         seq = seq.cuda(rank)
-        flash_attention_net.cuda(rank)
-        ring_attention_net.cuda(rank)
+        flash_attention.cuda(rank)
+        ring_attention.cuda(rank)
 
     # separate inputs for ring vs flash
 
@@ -144,6 +145,7 @@ def start(
 @click.option('--num-buckets', default = 2, help = 'number of buckets per machine (each sharded sequence is further windowed for flash attention to achieve even greater context lengths)')
 @click.option('--seq-len', default = 31, help = 'sequence length to test')
 @click.option('--model-dim', default = 8, help = 'model dimensions for testing')
+@click.option('--dim-head', default = 16, help = 'model dimensions for testing')
 @click.option('--compare-regular-attn', is_flag = True, help = 'compare ring to regular attention')
 def test(
     world_size: int,
@@ -156,6 +158,7 @@ def test(
     num_buckets: int,
     seq_len: int,
     model_dim: int,
+    dim_head: int,
     compare_regular_attn: bool
 ):
     assert not use_cuda or world_size <= torch.cuda.device_count(), f'world size {world_size} must be less than the number of cuda devices {torch.cuda.device_count()}'
@@ -172,6 +175,7 @@ def test(
             causal,
             striped_ring_attn,
             model_dim,
+            dim_head,
             use_cuda,
             compare_regular_attn
         ),
