@@ -66,9 +66,18 @@ def all_gather_variable_dim(t, dim = 0, sizes = None):
 class AllGatherFunction(Function):
     @staticmethod
     def forward(ctx, x, dim, sizes):
+        is_bool = x.dtype == torch.bool
+
+        if is_bool:
+            x = x.int()
+
         x, batch_sizes = all_gather_variable_dim(x, dim = dim, sizes = sizes)
         ctx.batch_sizes = batch_sizes.tolist()
         ctx.dim = dim
+
+        if is_bool:
+            x = x.bool()
+
         return x, batch_sizes
 
     @staticmethod
