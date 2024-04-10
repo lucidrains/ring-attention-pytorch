@@ -912,7 +912,20 @@ def _bwd_kernel(
         )
 
 def flash_attn_backward(
-    do, q, k, v, o, lse, dq, dk, dv, bias=None, causal=False, causal_mask_diagonal=False, softmax_scale=None
+    do,
+    q,
+    k,
+    v,
+    o,
+    lse,
+    dq,
+    dk,
+    dv,
+    delta=None,
+    bias=None,
+    causal=False,
+    causal_mask_diagonal=False,
+    softmax_scale=None
 ):
     # Make sure that the last dimension is contiguous
     if do.stride(-1) != 1:
@@ -929,28 +942,31 @@ def flash_attn_backward(
     softmax_scale = softmax_scale or 1.0 / math.sqrt(d)
     # dq_accum = torch.zeros_like(q, dtype=torch.float32)
     dq_accum = torch.empty_like(q, dtype=torch.float32)
-    delta = torch.empty_like(lse)
+
     # delta = torch.zeros_like(lse)
 
     BLOCK_HEADDIM = max(triton.next_power_of_2(d), 16)
-    grid = lambda META: (triton.cdiv(seqlen_q, META["BLOCK_M"]), batch * nheads)
-    _bwd_preprocess_do_o_dot[grid](
-        o,
-        do,
-        delta,
-        o.stride(0),
-        o.stride(2),
-        o.stride(1),
-        do.stride(0),
-        do.stride(2),
-        do.stride(1),
-        nheads,
-        seqlen_q,
-        seqlen_q_rounded,
-        d,
-        BLOCK_M=128,
-        BLOCK_HEADDIM=BLOCK_HEADDIM,
-    )
+
+    if not exists(delta):
+        delta = torch.empty_like(lse)
+        grid = lambda META: (triton.cdiv(seqlen_q, META["BLOCK_M"]), batch * nheads)
+        _bwd_preprocess_do_o_dot[grid](
+            o,
+            do,
+            delta,
+            o.stride(0),
+            o.stride(2),
+            o.stride(1),
+            do.stride(0),
+            do.stride(2),
+            do.stride(1),
+            nheads,
+            seqlen_q,
+            seqlen_q_rounded,
+            d,
+            BLOCK_M=128,
+            BLOCK_HEADDIM=BLOCK_HEADDIM,
+        )
 
     has_bias = bias is not None
     bias_type = "none"
@@ -1030,3 +1046,5 @@ def flash_attn_backward(
         # num_stages=1,
     )
     dq.copy_(dq_accum)
+
+    return delta

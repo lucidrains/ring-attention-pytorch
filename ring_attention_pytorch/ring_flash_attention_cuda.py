@@ -94,7 +94,7 @@ def unpad_inputs_and_return_inverse_fn(
 assert exists(importlib.util.find_spec('triton')), 'latest triton must be installed. `pip install triton -U` first'
 
 triton_version = version('triton')
-assert pkg_version.parse(triton_version) >= pkg_version.parse('2.1')
+assert pkg_version.parse(triton_version) >= pkg_version.parse('2.1'), 'triton must be version 2.1 or above. `pip install triton -U` to upgrade'
 
 import triton
 import triton.language as tl
@@ -320,6 +320,10 @@ class RingFlashAttentionCUDAFunction(Function):
         receive_kv_and_dkv = None
         receive_mask = None
 
+        # caching the delta (do * o for backwards pass) across ring reduce
+
+        delta = None
+
         # if not causal and has key padding mask
         # prepare row related tensors with unpad_input
 
@@ -371,7 +375,7 @@ class RingFlashAttentionCUDAFunction(Function):
                     ring_dv = torch.empty_like(v)
 
                     with torch.inference_mode():
-                        flash_attn_backward(
+                        delta = flash_attn_backward(
                             do,
                             q,
                             k,
@@ -381,6 +385,7 @@ class RingFlashAttentionCUDAFunction(Function):
                             ring_dq,
                             ring_dk,
                             ring_dv,
+                            delta = delta,
                             causal = block_causal,
                             causal_mask_diagonal = causal_mask_diagonal,
                             softmax_scale = softmax_scale
