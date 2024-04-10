@@ -18,6 +18,10 @@ from ring_attention_pytorch.ring import (
     get_world_size
 )
 
+from ring_attention_pytorch.triton_flash_attn import (
+    _flash_attn_backward
+)
+
 from beartype import beartype
 
 from einops import rearrange, repeat
@@ -601,12 +605,10 @@ class RingFlashAttentionCUDAFunction(Function):
                 load_accumulated = not is_first
             )
 
-        lse = lse[..., :q_seq_len]
-
         if not can_fuse_final_output_normalization:
             m = m[..., :q_seq_len]
 
-            o_scale = torch.exp(m - lse)
+            o_scale = torch.exp(m - lse[..., :q_seq_len])
             o.mul_(rearrange(o_scale, 'b h n -> b n h 1'))
 
         ctx.args = (
@@ -685,16 +687,6 @@ class RingFlashAttentionCUDAFunction(Function):
         receive_kv_and_dkv = None
         receive_mask = None
 
-        # hack for special causal mask for striped ring attention without having to modify cuda
-
-        if causal and striped_ring_attn:
-            # this is a hack that should also mask out the diagonal
-            # https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#21-change-behavior-of-causal-flag
-            q = pad_at_dim(q, (0, 1), dim = 1)
-            o = pad_at_dim(o, (0, 1), dim = 1)
-            do = pad_at_dim(do, (0, 1), dim = 1)
-            lse = pad_at_dim(lse, (0, 1), dim = -1)
-
         # if not causal and has key padding mask
         # prepare row related tensors with unpad_input
 
@@ -728,14 +720,14 @@ class RingFlashAttentionCUDAFunction(Function):
             if causal or not exists(mask):
 
                 block_causal = False
+                causal_mask_diagonal = False
+
                 need_accum = True
 
                 if causal:
                     if striped_ring_attn:
                         block_causal = True
-
-                        if get_rank() < ring_rank:
-                            n += 1
+                        causal_mask_diagonal = get_rank() < ring_rank
                     else:
                         block_causal = get_rank() == ring_rank
 
@@ -744,27 +736,28 @@ class RingFlashAttentionCUDAFunction(Function):
 
                 # use flash attention backwards kernel to calculate dq, dk, dv and accumulate
 
+                from ring_attention_pytorch.triton_flash_attn import _flash_attn_backward
+
                 if need_accum:
-                    ring_dq, ring_dk, ring_dv, *_ = _flash_attn_backward(
-                        dout = do[:, :n],
-                        q = q[:, :n],
-                        k = k,
-                        v = v,
-                        out = o[:, :n],
-                        softmax_lse = lse[..., :n],
-                        dq = torch.empty_like(q[:, :n]),
-                        dk = torch.empty_like(k),
-                        dv = torch.empty_like(v),
-                        dropout_p = 0.,
-                        softmax_scale = softmax_scale,
-                        causal = block_causal,
-                        window_size = (-1, -1),
-                        alibi_slopes = None,
-                        deterministic = False
-                    )
+                    ring_dq = torch.empty_like(q[:, :n])
+                    ring_dk = torch.empty_like(k)
+                    ring_dv = torch.empty_like(v)
 
-                    ring_dq = ring_dq[:, :row_length]
-
+                    with torch.inference_mode():
+                        _flash_attn_backward(
+                            do,
+                            q,
+                            k,
+                            v,
+                            o,
+                            lse,
+                            dq,
+                            dk,
+                            dv,
+                            causal = block_causal,
+                            causal_mask_diagonal = causal_mask_diagonal,
+                            softmax_scale = softmax_scale
+                        )
                 else:
                     ring_dq, ring_dk, ring_dv = 0., 0., 0.
             else:
