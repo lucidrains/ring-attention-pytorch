@@ -44,9 +44,6 @@ def pad_at_dim(t, pad: Tuple[int, int], *, dim = -1, value = 0.):
 def is_empty(t: Tensor):
     return t.numel() == 0
 
-def is_contiguous(x: Tensor):
-    return x.stride(-1) == 1
-
 def padded_false_on_right_side(t: Tensor):
     if t.shape[-1] <= 1:
         return True
@@ -65,8 +62,7 @@ flash_attn_version = version('flash_attn')
 assert pkg_version.parse(flash_attn_version) >= pkg_version.parse('2.5.1')
 
 from flash_attn.flash_attn_interface import (
-    _flash_attn_varlen_backward,
-    _flash_attn_backward
+    _flash_attn_varlen_backward
 )
 
 from flash_attn.bert_padding import (
@@ -369,15 +365,13 @@ class RingFlashAttentionCUDAFunction(Function):
 
                 # use flash attention backwards kernel to calculate dq, dk, dv and accumulate
 
-                from ring_attention_pytorch.triton_flash_attn import _flash_attn_backward
-
                 if need_accum:
                     ring_dq = torch.empty_like(q)
                     ring_dk = torch.empty_like(k)
                     ring_dv = torch.empty_like(v)
 
                     with torch.inference_mode():
-                        _flash_attn_backward(
+                        flash_attn_backward(
                             do,
                             q,
                             k,

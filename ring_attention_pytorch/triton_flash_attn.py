@@ -5,8 +5,18 @@
 import math
 
 import torch
+from torch import Tensor
 import triton
 import triton.language as tl
+
+def exists(v):
+    return v is not None
+
+def default(val, d):
+    return val if exists(val) else d
+
+def is_contiguous(x: Tensor):
+    return x.stride(-1) == 1
 
 @triton.heuristics(
     {
@@ -901,7 +911,7 @@ def _bwd_kernel(
             BLOCK_N=BLOCK_N,
         )
 
-def _flash_attn_backward(
+def flash_attn_backward(
     do, q, k, v, o, lse, dq, dk, dv, bias=None, causal=False, causal_mask_diagonal=False, softmax_scale=None
 ):
     # Make sure that the last dimension is contiguous
