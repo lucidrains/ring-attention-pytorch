@@ -715,8 +715,6 @@ class RingFlashAttentionCUDAFunction(Function):
             # determine whether to do causal mask or not
             # depends on whether it is striped attention, as well as current machine rank vs ring rank
 
-            n = row_length
-
             if causal or not exists(mask):
 
                 block_causal = False
@@ -739,7 +737,7 @@ class RingFlashAttentionCUDAFunction(Function):
                 from ring_attention_pytorch.triton_flash_attn import _flash_attn_backward
 
                 if need_accum:
-                    ring_dq = torch.empty_like(q[:, :n])
+                    ring_dq = torch.empty_like(q)
                     ring_dk = torch.empty_like(k)
                     ring_dv = torch.empty_like(v)
 
@@ -751,9 +749,9 @@ class RingFlashAttentionCUDAFunction(Function):
                             v,
                             o,
                             lse,
-                            dq,
-                            dk,
-                            dv,
+                            ring_dq,
+                            ring_dk,
+                            ring_dv,
                             causal = block_causal,
                             causal_mask_diagonal = causal_mask_diagonal,
                             softmax_scale = softmax_scale
