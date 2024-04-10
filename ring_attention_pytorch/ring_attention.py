@@ -176,7 +176,7 @@ def maybe_pad_seq_and_mask(
     mask: Optional[Tensor],
     seq_size: int
 ):
-    orig_x, shape = x, x.shape[:2]
+    orig_x, device, shape = x, x.device, x.shape[:2]
     seq_len = shape[-1]
 
     # auto pad sequence and mask, as ring passing makes assumption tensor is all same shape
@@ -187,7 +187,7 @@ def maybe_pad_seq_and_mask(
         return x, mask
 
     if not exists(mask):
-        mask = torch.ones(shape).bool()
+        mask = torch.ones(shape, device = device).bool()
 
     mask, _ = pad_to_multiple(mask, seq_size, pad_value = False)
 
