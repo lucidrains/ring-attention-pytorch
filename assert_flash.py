@@ -14,21 +14,30 @@ from ring_attention_pytorch import (
 @click.option('--seq-len', default = 62)
 @click.option('--dim-head', default = 16)
 @click.option('--heads', default = 2)
+@click.option('--rand-key-pad-mask', is_flag = True)
 @click.option('--bucket_size', default = 4)
-@click.option('--flash-cuda-kernel', is_flag = True)
+@click.option('--cuda-kernel', is_flag = True)
 def test(
     causal: bool,
     seq_len: int,
     dim_head: int,
     heads: int,
+    rand_key_pad_mask: bool,
     bucket_size: int,
-    flash_cuda_kernel: bool
+    cuda_kernel: bool
 ):
     # base qkv
 
     q = torch.randn(2, seq_len, heads, dim_head)
     k = torch.randn(2, seq_len, heads, dim_head)
     v = torch.randn(2, seq_len, heads, dim_head)
+
+    # key padding mask
+
+    mask = None
+    if rand_key_pad_mask:
+        assert not causal
+        mask = torch.randint(0, 2, (2, seq_len)).bool()
 
     # flash and regular qkv's
 
@@ -40,7 +49,7 @@ def test(
     rk = k.clone().requires_grad_()
     rv = v.clone().requires_grad_()
 
-    if flash_cuda_kernel:
+    if cuda_kernel:
         assert torch.cuda.is_available()
 
         fcq = q.clone().cuda().requires_grad_()
@@ -49,15 +58,18 @@ def test(
 
     # forward
 
-    o = default_attention(rq, rk, rv, causal = causal)
-    fo = ring_flash_attn(fq, fk, fv, bucket_size = bucket_size, causal = causal)
+    o = default_attention(rq, rk, rv, causal = causal, mask = mask)
+    fo = ring_flash_attn(fq, fk, fv, bucket_size = bucket_size, causal = causal, mask = mask)
 
     assert torch.allclose(o, fo, atol = 1e-6)
 
-    if flash_cuda_kernel:
+    if cuda_kernel:
         from ring_attention_pytorch.ring_flash_attention_cuda import ring_flash_attn_cuda
 
-        fco = ring_flash_attn_cuda(fcq, fck, fcv, None, causal)
+        if mask is not None:
+            mask = mask.cuda()
+
+        fco = ring_flash_attn_cuda(fcq, fck, fcv, mask, causal)
         fco.sum().backward()
 
         assert torch.allclose(o, fco.cpu(), atol = 1e-2)
@@ -71,7 +83,7 @@ def test(
     assert torch.allclose(rk.grad, fk.grad, atol = 1e-6)
     assert torch.allclose(rv.grad, fv.grad, atol = 1e-6)
 
-    if flash_cuda_kernel:
+    if cuda_kernel:
         assert torch.allclose(rq.grad, fcq.grad.cpu(), atol = 1e-2)
         assert torch.allclose(rk.grad, fck.grad.cpu(), atol = 1e-2)
         assert torch.allclose(rv.grad, fcv.grad.cpu(), atol = 1e-2)
