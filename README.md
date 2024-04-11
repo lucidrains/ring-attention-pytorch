@@ -156,3 +156,4 @@ $ python assert.py --use-cuda --causal --striped-ring-attn
 }
 ```
 
+*<a href="http://www.incompleteideas.net/IncIdeas/BitterLesson.html">The Bitter Lesson</a>* - Richard Sutton

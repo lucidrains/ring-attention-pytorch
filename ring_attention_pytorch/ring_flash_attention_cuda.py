@@ -1,10 +1,8 @@
 import math
-from functools import partial
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 from torch import nn, einsum, Tensor
-import torch.nn.functional as F
 from torch.autograd.function import Function
 from torch.cuda.amp import autocast
 
@@ -19,7 +17,7 @@ from ring_attention_pytorch.ring import (
 
 from beartype import beartype
 
-from einops import rearrange, repeat
+from einops import rearrange
 
 # helpers
 
@@ -31,17 +29,6 @@ def default(val, d):
 
 def divisible_by(num, den):
     return (num % den) == 0
-
-def first(seq):
-    return seq[0]
-
-def pad_at_dim(t, pad: Tuple[int, int], *, dim = -1, value = 0.):
-    dims_from_right = (- dim - 1) if dim < 0 else (t.ndim - dim - 1)
-    zeros = ((0, 0) * dims_from_right)
-    return F.pad(t, (*zeros, *pad), value = value)
-
-def is_empty(t: Tensor):
-    return t.numel() == 0
 
 # ring + (flash) attention forwards and backwards
 
