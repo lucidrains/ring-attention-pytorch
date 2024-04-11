@@ -40,6 +40,7 @@ def cast_tuple(t, length = 1):
 def divisible_by(num, den):
     return (num % den) == 0
 
+@beartype
 def default_attention(
     q: Tensor,
     k: Tensor,
@@ -80,6 +81,7 @@ def default_attention(
 # rotary embeddings with modifications to support striped attention
 
 class RingRotaryEmbedding(Module):
+    @beartype
     def __init__(
         self,
         dim,
@@ -105,6 +107,7 @@ class RingRotaryEmbedding(Module):
         return self.inv_freq.is_cuda
 
     @autocast(enabled = False)
+    @beartype
     def forward(
         self,
         seq_len: int
