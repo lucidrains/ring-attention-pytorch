@@ -1,6 +1,7 @@
 # taken from https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/flash_attn_triton.py
-# with fixes for triton 2.3 and preparing for modifications to backwards
+# with fixes for triton 2.3
 # forward is modified to return unnormalized accumulation, row maxes, row lse - reduced over passed rings
+# both forwards and backwards is modified to allow for masking out the diagonal for striped ring attention
 
 import math
 
@@ -8,6 +9,8 @@ import torch
 from torch import Tensor
 import triton
 import triton.language as tl
+
+from einops import repeat
 
 def exists(v):
     return v is not None
