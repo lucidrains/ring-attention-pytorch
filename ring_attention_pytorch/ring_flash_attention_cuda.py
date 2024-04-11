@@ -1,7 +1,6 @@
 import math
 from functools import partial
 from typing import Optional, Tuple
-import packaging.version as pkg_version
 
 import torch
 from torch import nn, einsum, Tensor
@@ -251,7 +250,6 @@ class RingFlashAttentionCUDAFunction(Function):
         assert k.dtype == v.dtype
         kv_dtype = k.dtype
 
-        k, v, dk, dv = map(lambda t: t.view(torch.float32), (k, v, dk, dv))
         kv_and_dkv = torch.stack((k, v, dk, dv))
 
         # receive buffers, to be alternated with sent buffer
@@ -266,10 +264,6 @@ class RingFlashAttentionCUDAFunction(Function):
         for (ring_rank, _), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             k, v, dk, dv = kv_and_dkv
-
-            # view k, v, dk, dv as the correct type of either float16 or bfloat16
-
-            k, v, dk, dv = map(lambda t: t.view(kv_dtype), (k, v, dk, dv))
 
             # translate key padding mask to bias
 
@@ -335,8 +329,6 @@ class RingFlashAttentionCUDAFunction(Function):
             dkv = ring_pass(ring_size - max_ring_passes + 1, dkv)
 
             dk, dv = dkv
-
-        dk, dv = map(lambda t: t.view(kv_dtype), (dk, dv))
 
         dq, dk, dv = map(lambda t: t.to(dtype), (dq, dk, dv))
 

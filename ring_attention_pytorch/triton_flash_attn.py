@@ -21,6 +21,8 @@ def is_contiguous(x: Tensor):
 
 # make sure triton 2.1+ is installed
 
+import packaging.version as pkg_version
+
 import importlib
 from importlib.metadata import version
 
