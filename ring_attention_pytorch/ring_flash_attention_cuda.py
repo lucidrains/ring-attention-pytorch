@@ -44,21 +44,6 @@ def pad_at_dim(t, pad: Tuple[int, int], *, dim = -1, value = 0.):
 def is_empty(t: Tensor):
     return t.numel() == 0
 
-# make sure triton is installed
-
-import importlib
-from importlib.metadata import version
-
-assert exists(importlib.util.find_spec('triton')), 'latest triton must be installed. `pip install triton -U` first'
-
-triton_version = version('triton')
-assert pkg_version.parse(triton_version) >= pkg_version.parse('2.1'), 'triton must be version 2.1 or above. `pip install triton -U` to upgrade'
-
-from ring_attention_pytorch.triton_flash_attn import (
-    flash_attn_backward,
-    flash_attn_forward
-)
-
 # ring + (flash) attention forwards and backwards
 
 # flash attention v1 - https://arxiv.org/abs/2205.14135
@@ -82,6 +67,8 @@ class RingFlashAttentionCUDAFunction(Function):
         max_lookback_seq_len: Optional[int],
         ring_size: Optional[int]
     ):
+        from ring_attention_pytorch.triton_flash_attn import flash_attn_forward
+
         assert all([t.is_cuda for t in (q, k, v)]), 'inputs must be all on cuda'
 
         dtype = q.dtype
@@ -220,7 +207,8 @@ class RingFlashAttentionCUDAFunction(Function):
     @staticmethod
     @torch.no_grad()
     def backward(ctx, do):
-        """ Algorithm 2 in the v2 paper """
+
+        from ring_attention_pytorch.triton_flash_attn import flash_attn_backward
 
         (
             causal,

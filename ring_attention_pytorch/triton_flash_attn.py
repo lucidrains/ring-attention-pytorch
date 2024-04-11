@@ -7,8 +7,6 @@ import math
 
 import torch
 from torch import Tensor
-import triton
-import triton.language as tl
 
 from einops import repeat
 
@@ -20,6 +18,21 @@ def default(val, d):
 
 def is_contiguous(x: Tensor):
     return x.stride(-1) == 1
+
+# make sure triton 2.1+ is installed
+
+import importlib
+from importlib.metadata import version
+
+assert exists(importlib.util.find_spec('triton')), 'latest triton must be installed. `pip install triton -U` first'
+
+triton_version = version('triton')
+assert pkg_version.parse(triton_version) >= pkg_version.parse('2.1'), 'triton must be version 2.1 or above. `pip install triton -U` to upgrade'
+
+import triton
+import triton.language as tl
+
+# kernels
 
 @triton.heuristics(
     {
