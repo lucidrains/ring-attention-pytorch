@@ -6,7 +6,7 @@ import torch
 from torch import nn, einsum, Tensor
 from torch.autograd.function import Function
 
-from einops import rearrange
+from einops import rearrange, repeat, reduce
 
 from ring_attention_pytorch.ring import (
     ring_pass,
@@ -69,11 +69,15 @@ class RingFlashAttentionFunction(Function):
     ):
         ring_size = default(ring_size, get_world_size())
 
-        cross_attn = q.shape[-2] != k.shape[-2]
+        cross_attn = q.shape[-3] != k.shape[-3]
         ring_reduce_col &= not cross_attn
         striped_ring_attn &= not cross_attn
 
-        assert k.shape[-1] == v.shape[-1]
+        assert k.shape[-2:] == v.shape[-2:]
+        q_heads, kv_heads = q.shape[-2], k.shape[-2]
+
+        assert divisible_by(q_heads, kv_heads)
+        q_head_groups = q_heads // kv_heads
 
         per_machine_seq_size = k.shape[1]
 
@@ -123,6 +127,10 @@ class RingFlashAttentionFunction(Function):
         for (ring_rank, _), ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             k, v = kv
+
+            # account for grouped query attention
+
+            k, v = map(lambda t: repeat(t, '... h d -> ... (g h) d', g = q_head_groups), (k, v))
 
             col_splits = zip(
                 k.split(bucket_size, dim = -3),
@@ -206,7 +214,8 @@ class RingFlashAttentionFunction(Function):
             max_ring_passes,
             num_lookback_buckets,
             striped_ring_attn,
-            ring_size
+            ring_size,
+            q_head_groups
         )
 
         ctx.save_for_backward(q, orig_k, orig_v, o, lse)
@@ -227,7 +236,8 @@ class RingFlashAttentionFunction(Function):
             max_ring_passes,
             num_lookback_buckets,
             striped_ring_attn,
-            ring_size
+            ring_size,
+            q_head_groups
         ) = ctx.args
 
         q, k, v, o, lse = ctx.saved_tensors
@@ -267,6 +277,10 @@ class RingFlashAttentionFunction(Function):
             k_ring_rank = ring_rank % ring_size
 
             k, v, dk, dv = kv_and_dkv
+
+            # account for grouped query attention
+
+            k, v = map(lambda t: repeat(t, '... h d -> ... (g h) d', g = q_head_groups), (k, v))
 
             col_splits = zip(
                 k.split(bucket_size, dim = 1),
@@ -322,6 +336,11 @@ class RingFlashAttentionFunction(Function):
 
                     dq_chunk = einsum('b h i j, b j h d -> b i h d', ds, kc)
                     dk_chunk = einsum('b h i j, b i h d -> b j h d', ds, qc)
+
+                    # account for grouped query attention
+
+                    dk_chunk = reduce(dk_chunk, '... (g h) d -> ... h d', g = q_head_groups, reduction = 'sum')
+                    dv_chunk = reduce(dv_chunk, '... (g h) d -> ... h d', g = q_head_groups, reduction = 'sum')
 
                     dqc.add_(dq_chunk)
                     dkc.add_(dk_chunk)

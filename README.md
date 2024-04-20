@@ -10,6 +10,8 @@ I believe this is being used for the 1-10 million tokens for the latest Gemini. 
 
 In addition, the repository also contains the logic for <a href="https://arxiv.org/abs/2311.09431">Striped Attention</a>, a follow up paper that permutes the sequence for better workload balancing for autoregressive transformers.
 
+It also contains support for <a href="https://arxiv.org/abs/2305.13245">grouped query attention</a>, popularized by Llama series of attention models. This will further save on communication costs during the ring reduce.
+
 ## Appreciation
 
 - <a href="https://a16z.com/supporting-the-open-source-ai-community/">A16Z Open Source AI Grant Program</a> for the generous sponsorship, as well as my other sponsors, for affording me the independence to open source current artificial intelligence research
@@ -154,6 +156,17 @@ $ python assert.py --use-cuda --causal --striped-ring-attn
     author  = {Philippe Tillet and H. Kung and D. Cox},
     journal = {Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and Programming Languages},
     year    = {2019}
+}
+```
+
+```bibtex
+@article{Ainslie2023GQATG,
+    title   = {GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints},
+    author  = {Joshua Ainslie and James Lee-Thorp and Michiel de Jong and Yury Zemlyanskiy and Federico Lebr'on and Sumit K. Sanghai},
+    journal = {ArXiv},
+    year    = {2023},
+    volume  = {abs/2305.13245},
+    url     = {https://api.semanticscholar.org/CorpusID:258833177}
 }
 ```
 

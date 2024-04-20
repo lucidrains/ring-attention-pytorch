@@ -17,7 +17,7 @@ from ring_attention_pytorch.ring import (
 
 from beartype import beartype
 
-from einops import rearrange
+from einops import rearrange, repeat, reduce
 
 # helpers
 
@@ -54,6 +54,12 @@ class RingFlashAttentionCUDAFunction(Function):
         ring_size: Optional[int]
     ):
         from ring_attention_pytorch.triton_flash_attn import flash_attn_forward
+
+        assert k.shape[-2:] == v.shape[-2:]
+        q_heads, kv_heads = q.shape[-2], k.shape[-2]
+
+        assert divisible_by(q_heads, kv_heads)
+        q_head_groups = q_heads // kv_heads
 
         assert all([t.is_cuda for t in (q, k, v)]), 'inputs must be all on cuda'
 
@@ -127,6 +133,10 @@ class RingFlashAttentionCUDAFunction(Function):
         for (ring_rank, (is_first, is_last)), ((kv, mask), (receive_kv, receive_mask)) in ring_pass_fn(kv, mask, receive_buffers = (receive_kv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
             k, v = kv
 
+            # account for grouped query attention
+
+            k, v = map(lambda t: repeat(t, '... h d -> ... (g h) d', g = q_head_groups), (k, v))
+
             # translate key padding mask to bias
 
             bias = None
@@ -180,6 +190,7 @@ class RingFlashAttentionCUDAFunction(Function):
             num_lookback_buckets,
             striped_ring_attn,
             ring_size,
+            q_head_groups,
             dtype
         )
 
@@ -206,6 +217,7 @@ class RingFlashAttentionCUDAFunction(Function):
             num_lookback_buckets,
             striped_ring_attn,
             ring_size,
+            q_head_groups,
             dtype
         ) = ctx.args
 
@@ -232,7 +244,6 @@ class RingFlashAttentionCUDAFunction(Function):
         dv = torch.zeros_like(v, device = device)
 
         # k and v will have 16 bits, and dk and dv can also be accumulated safely with the same type, i think
-        # view everything as float32 for ring passing
 
         assert k.dtype == v.dtype
         kv_dtype = k.dtype
@@ -251,6 +262,10 @@ class RingFlashAttentionCUDAFunction(Function):
         for (ring_rank, _), ((kv_and_dkv, mask), (receive_kv_and_dkv, receive_mask)) in ring_pass_fn(kv_and_dkv, mask, receive_buffers = (receive_kv_and_dkv, receive_mask), max_iters = max_ring_passes, ring_size = ring_size):
 
             k, v, dk, dv = kv_and_dkv
+
+            # account for grouped query attention
+
+            k, v = map(lambda t: repeat(t, '... h d -> ... (g h) d', g = q_head_groups), (k, v))
 
             # translate key padding mask to bias
 
@@ -300,12 +315,15 @@ class RingFlashAttentionCUDAFunction(Function):
                         causal_mask_diagonal = causal_mask_diagonal,
                         softmax_scale = softmax_scale
                     )
-            else:
-                ring_dq, ring_dk, ring_dv = 0., 0., 0.
 
-            dq.add_(ring_dq)
-            dk.add_(ring_dk)
-            dv.add_(ring_dv)
+                # account for grouped query attention
+
+                ring_dk = reduce(ring_dk, '... (g h) d -> ... h d', g = q_head_groups, reduction = 'sum')
+                ring_dv = reduce(ring_dv, '... (g h) d -> ... h d', g = q_head_groups, reduction = 'sum')
+
+                dq.add_(ring_dq)
+                dk.add_(ring_dk)
+                dv.add_(ring_dv)
 
             if not ring_reduce_col:
                 continue
