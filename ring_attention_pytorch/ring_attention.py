@@ -264,6 +264,7 @@ class RingAttention(Module):
         *,
         dim_head: int = 64,
         heads: int = 8,
+        num_grouped_query_heads: int = 1,
         causal: bool = False,
         eps: float = 1e-10,
         bucket_size: int = 512,
@@ -287,6 +288,14 @@ class RingAttention(Module):
 
         self.eps = eps
         self.heads = heads
+        self.dim_head = dim_head
+
+        assert divisible_by(heads, num_grouped_query_heads), f'number of query heads ({heads}) must be divisible by the groups ({num_grouped_query_heads})'
+
+        kv_heads = heads // num_grouped_query_heads
+        self.num_grouped_query_heads = num_grouped_query_heads
+        self.qkv_head_breakdown = (heads, kv_heads, kv_heads)
+
         self.scale = dim_head ** -0.5
         self.causal = causal
 
@@ -321,10 +330,13 @@ class RingAttention(Module):
         # projections
 
         dim_inner = dim_head * heads
+        dim_kv_inner = dim_head * kv_heads
+
+        self.to_qkv_split = (dim_inner, dim_kv_inner, dim_kv_inner)
 
         self.to_qkv = nn.Sequential(
             RMSNorm(dim) if prenorm else nn.Identity(),
-            nn.Linear(dim, dim_inner * 3, bias = False)
+            nn.Linear(dim, dim_inner + (dim_kv_inner * 2), bias = False)
         )
 
         self.to_out = nn.Linear(dim_inner, dim, bias = False)
@@ -369,7 +381,8 @@ class RingAttention(Module):
         device = x.device
 
         qkv = self.to_qkv(x)
-        q, k, v = rearrange(qkv, 'b n (qkv h d) -> qkv b n h d', qkv = 3, h = self.heads)
+
+        q, k, v = rearrange(qkv, 'b n (h d) -> b n h d', d = self.dim_head).split(self.qkv_head_breakdown, dim = -2)
 
         # rotary relative positions
 
@@ -460,6 +473,7 @@ class RingTransformer(Module):
         dim_head: int = 64,
         heads: int = 8,
         ff_mult: int = 4,
+        num_grouped_query_heads: int = 1,   # grouped query attention - kv heads = (heads // num_grouped_query_heads)
         bucket_size: int = 512,
         ring_attn: bool = False,
         striped_ring_attn: bool = False,
@@ -516,6 +530,7 @@ class RingTransformer(Module):
                     causal = causal,
                     dim_head = dim_head,
                     heads = heads,
+                    num_grouped_query_heads = num_grouped_query_heads,
                     bucket_size = bucket_size,
                     ring_attn = ring_attn,
                     ring_seq_size = ring_seq_size,

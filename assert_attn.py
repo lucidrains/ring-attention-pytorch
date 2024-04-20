@@ -38,6 +38,8 @@ def start(
     causal,
     striped_ring_attn,
     dim,
+    heads,
+    num_grouped_query_heads,
     dim_head,
     use_cuda,
     compare_regular_attn
@@ -51,6 +53,8 @@ def start(
         dim = dim,
         causal = causal,
         dim_head = dim_head,
+        heads = heads,
+        num_grouped_query_heads = num_grouped_query_heads,
         ring_attn = True,
         striped_ring_attn = striped_ring_attn,
         ring_seq_size = ring_seq_size,
@@ -63,6 +67,8 @@ def start(
         dim = dim,
         causal = causal,
         dim_head = dim_head,
+        heads = heads,
+        num_grouped_query_heads = num_grouped_query_heads,
         ring_attn = False,
         ring_seq_size = ring_seq_size,
         bucket_size = bucket_size,
@@ -145,6 +151,8 @@ def start(
 @click.option('--num-buckets', default = 2, help = 'number of buckets per machine (each sharded sequence is further windowed for flash attention to achieve even greater context lengths)')
 @click.option('--seq-len', default = 31, help = 'sequence length to test')
 @click.option('--model-dim', default = 8, help = 'model dimensions for testing')
+@click.option('--heads', default = 8, help = 'number of query attention heads')
+@click.option('--num-grouped-query-heads', default = 2, help = 'number of query attention head groups')
 @click.option('--dim-head', default = 16, help = 'model dimensions for testing')
 @click.option('--compare-regular-attn', is_flag = True, help = 'compare ring to regular attention')
 def test(
@@ -158,6 +166,8 @@ def test(
     num_buckets: int,
     seq_len: int,
     model_dim: int,
+    heads: int,
+    num_grouped_query_heads: int,
     dim_head: int,
     compare_regular_attn: bool
 ):
@@ -175,6 +185,8 @@ def test(
             causal,
             striped_ring_attn,
             model_dim,
+            heads,
+            num_grouped_query_heads,
             dim_head,
             use_cuda,
             compare_regular_attn
