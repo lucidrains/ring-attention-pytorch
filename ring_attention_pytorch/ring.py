@@ -1,4 +1,5 @@
-from typing import Optional
+from __future__ import annotations
+
 from functools import lru_cache, partial, wraps
 from collections import namedtuple
 
@@ -76,8 +77,8 @@ def send_and_receive_(x, receive_buffer, send_to_rank, receive_from_rank):
 def ring_pass(
     num_ring_passes: int,
     x: Tensor,
-    receive_buffer: Optional[Tensor] = None,
-    ring_size: Optional[int] = None
+    receive_buffer: Tensor | None = None,
+    ring_size: int | None = None
 ):
     ring_size = default(ring_size, get_world_size())
     x = x.contiguous()

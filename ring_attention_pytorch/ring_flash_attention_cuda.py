@@ -1,5 +1,6 @@
-import math
-from typing import Optional
+from __future__ import annotations
+
+from math import ceil
 
 import torch
 from torch import nn, einsum, Tensor
@@ -45,13 +46,13 @@ class RingFlashAttentionCUDAFunction(Function):
         q: Tensor,
         k: Tensor,
         v: Tensor,
-        mask: Optional[Tensor],
+        mask: Tensor | None,
         causal: bool,
         bucket_size: int,
         ring_reduce_col: bool,
         striped_ring_attn: bool,
-        max_lookback_seq_len: Optional[int],
-        ring_size: Optional[int]
+        max_lookback_seq_len: int | None,
+        ring_size: int | None
     ):
         from ring_attention_pytorch.triton_flash_attn import flash_attn_forward
 
@@ -94,7 +95,7 @@ class RingFlashAttentionCUDAFunction(Function):
             assert causal
             assert not (ring_reduce_col and not divisible_by(per_machine_seq_size, bucket_size))
 
-            max_ring_passes = math.ceil(max_lookback_seq_len / per_machine_seq_size)
+            max_ring_passes = ceil(max_lookback_seq_len / per_machine_seq_size)
             num_lookback_buckets = max_lookback_seq_len // bucket_size
 
         # ignore key padding mask if autoregressive
@@ -347,12 +348,12 @@ def ring_flash_attn_cuda(
     q: Tensor,
     k: Tensor,
     v: Tensor,
-    mask: Optional[Tensor] = None,
+    mask: Tensor | None = None,
     causal: bool = False,
     bucket_size: int = 1024,
     ring_reduce_col: bool = False,
     striped_ring_attn: bool = False,
-    max_lookback_seq_len: Optional[int] = None,
-    ring_size: Optional[int] = None
+    max_lookback_seq_len: int | None = None,
+    ring_size: int | None = None
 ):
     return ring_flash_attn_cuda_(q, k, v, mask, causal, bucket_size, ring_reduce_col, striped_ring_attn, max_lookback_seq_len, ring_size)

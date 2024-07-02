@@ -1,4 +1,5 @@
-from typing import Optional, Tuple, Union
+from __future__ import annotations
+from typing import Tuple
 
 import torch
 from torch import nn, einsum, Tensor
@@ -45,7 +46,7 @@ def default_attention(
     q: Tensor,
     k: Tensor,
     v: Tensor,
-    mask: Optional[Tensor] = None,
+    mask: Tensor | None = None,
     causal: bool = False
 ):
     device = q.device
@@ -184,7 +185,7 @@ def pad_to_multiple(
 
 def maybe_pad_seq_and_mask(
     x: Tensor,
-    mask: Optional[Tensor],
+    mask: Tensor | None,
     seq_size: int
 ):
     orig_x, device, shape = x, x.device, x.shape[:2]
@@ -206,7 +207,7 @@ def maybe_pad_seq_and_mask(
 
 def sharded_batch_to_sharded_seq(
     x: Tensor,
-    mask: Optional[Tensor],
+    mask: Tensor | None,
     seq_size: int
 ):
     assert is_distributed()
@@ -278,14 +279,14 @@ class RingAttention(Module):
         bucket_size: int = 512,
         ring_attn: bool = False,
         ring_seq_size: int = 512,
-        max_lookback_seq_len: Optional[int] = None,
+        max_lookback_seq_len: int | None = None,
         striped_ring_attn: bool = False,
         auto_shard_seq: bool = False,
         prenorm: bool = True,
         force_regular_attn: bool = False,
         rotary_embed: bool = False,
         rotary_embed_theta: int = 10000,
-        use_cuda_kernel: Optional[bool] = None
+        use_cuda_kernel: bool | None = None
     ):
         super().__init__()
         # whether to use flash attention cuda kernel
@@ -486,12 +487,12 @@ class RingTransformer(Module):
         ring_attn: bool = False,
         striped_ring_attn: bool = False,
         ring_seq_size: int = 512,
-        auto_shard_seq: Optional[bool] = None,
-        max_lookback_seq_len: Optional[Union[Tuple[int, ...], int]] = None,
+        auto_shard_seq: bool | None = None,
+        max_lookback_seq_len: Tuple[int, ...] | int | None = None,
         rotary_embed_theta: int = 10000,    # will need to be changed for the million token context
         ignore_index: int = -1,
         force_regular_attn: bool = False,
-        use_cuda_kernel: Optional[bool] = None
+        use_cuda_kernel: bool | None = None
     ):
         super().__init__()
 

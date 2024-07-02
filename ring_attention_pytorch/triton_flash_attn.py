@@ -3,7 +3,7 @@
 # forward is modified to return unnormalized accumulation, row maxes, row lse - reduced over passed rings
 # both forwards and backwards is modified to allow for masking out the diagonal for striped ring attention
 
-import math
+from math import ceil
 
 import torch
 from torch import Tensor
@@ -332,7 +332,7 @@ def flash_attn_forward(
 
     bias_strides = (bias.stride(0), bias.stride(1), bias.stride(2)) if has_bias else (0, 0, 0)
 
-    seqlen_q_rounded = math.ceil(seqlen_q / 128) * 128
+    seqlen_q_rounded = ceil(seqlen_q / 128) * 128
 
     if not exists(lse):
         max_neg_value = -torch.finfo(torch.float32).max
@@ -952,7 +952,7 @@ def flash_attn_backward(
     _, seqlen_k, _, _ = k.shape
     # assert d in {16, 32, 64, 128}
     assert d <= 128
-    seqlen_q_rounded = math.ceil(seqlen_q / 128) * 128
+    seqlen_q_rounded = ceil(seqlen_q / 128) * 128
 
     assert lse.shape == (batch, nheads, seqlen_q_rounded)
     assert q.stride(-1) == k.stride(-1) == v.stride(-1) == o.stride(-1) == 1
