@@ -45,6 +45,9 @@ def maybe_split(t, size, dim = -2):
 
     return t.split(size, dim = dim)
 
+def softclamp(t, value):
+    return (t / value).tan() * value
+
 # ring + (flash) attention forwards and backwards
 
 # flash attention v1 - https://arxiv.org/abs/2205.14135
@@ -66,7 +69,9 @@ class RingFlashAttentionFunction(Function):
         ring_reduce_col: bool,
         striped_ring_attn: bool,
         max_lookback_seq_len: int | None,
-        ring_size: int | None
+        ring_size: int | None,
+        softclamp_qk_sim: bool,
+        softclamp_value: float
     ):
         ring_size = default(ring_size, get_world_size())
 
@@ -156,6 +161,9 @@ class RingFlashAttentionFunction(Function):
 
                     attn_weights = einsum('b i h d, b j h d -> b h i j', qc, kc) * scale
 
+                    if softclamp_qk_sim:
+                        attn_weights = softclamp(attn_weights, softclamp_value)
+
                     if exists(col_mask):
                         col_mask_unsqueezed = rearrange(col_mask, 'b j -> b 1 1 j')
                         attn_weights = attn_weights.masked_fill(~col_mask_unsqueezed, max_neg_value)
@@ -216,7 +224,9 @@ class RingFlashAttentionFunction(Function):
             num_lookback_buckets,
             striped_ring_attn,
             ring_size,
-            q_head_groups
+            q_head_groups,
+            softclamp_qk_sim,
+            softclamp_value
         )
 
         ctx.save_for_backward(q, orig_k, orig_v, o, lse)
@@ -238,7 +248,9 @@ class RingFlashAttentionFunction(Function):
             num_lookback_buckets,
             striped_ring_attn,
             ring_size,
-            q_head_groups
+            q_head_groups,
+            softclamp_qk_sim,
+            softclamp_value
         ) = ctx.args
 
         q, k, v, o, lse = ctx.saved_tensors
@@ -307,6 +319,10 @@ class RingFlashAttentionFunction(Function):
 
                     attn_weights = einsum('b i h d, b j h d -> b h i j', qc, kc) * scale
 
+                    if softclamp_qk_sim:
+                        attn_weights = softclamp(attn_weights, softclamp_value)
+                        softclamped_attn_weights = attn_weights.clone()
+
                     if causal:
                         if (row_bucket_index - col_bucket_index) > num_lookback_buckets:
                             continue
@@ -335,6 +351,13 @@ class RingFlashAttentionFunction(Function):
 
                     ds = p * scale * (dp - Dc)
 
+                    # backwards of tanh(x) for softclamping is (1 + tanh(x)^2)
+
+                    if softclamp_qk_sim:
+                        ds *= (softclamped_attn_weights / softclamp_value) ** 2 + 1
+
+                    # dq and dk chunks
+
                     dq_chunk = einsum('b h i j, b j h d -> b i h d', ds, kc)
                     dk_chunk = einsum('b h i j, b i h d -> b j h d', ds, qc)
 
@@ -357,7 +380,7 @@ class RingFlashAttentionFunction(Function):
 
             dk, dv = dkv
 
-        return dq, dk, dv, None, None, None, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None, None, None, None, None
 
 ring_flash_attn_ = RingFlashAttentionFunction.apply
 
@@ -372,6 +395,8 @@ def ring_flash_attn(
     ring_reduce_col: bool = False,
     striped_ring_attn: bool = False,
     max_lookback_seq_len: int | None = None,
-    ring_size: int | None = None
+    ring_size: int | None = None,
+    softclamp_qk_sim: bool = False,
+    softclamp_value: float = 30.
 ):
-    return ring_flash_attn_(q, k, v, mask, causal, bucket_size, ring_reduce_col, striped_ring_attn, max_lookback_seq_len, ring_size)
+    return ring_flash_attn_(q, k, v, mask, causal, bucket_size, ring_reduce_col, striped_ring_attn, max_lookback_seq_len, ring_size, softclamp_qk_sim, softclamp_value)
