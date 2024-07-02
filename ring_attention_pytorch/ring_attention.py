@@ -41,13 +41,18 @@ def cast_tuple(t, length = 1):
 def divisible_by(num, den):
     return (num % den) == 0
 
+def softclamp(t, value):
+    return (t / value).tan() * value
+
 @beartype
 def default_attention(
     q: Tensor,
     k: Tensor,
     v: Tensor,
     mask: Tensor | None = None,
-    causal: bool = False
+    causal: bool = False,
+    softclamp_qk_sim: bool = False,
+    softclamp_value: float = 30.
 ):
     device = q.device
     q = q * (q.shape[-1] ** -0.5)
@@ -65,6 +70,11 @@ def default_attention(
     # similarity
 
     sim = einsum('b i h d, b j h d -> b h i j', q, k)
+
+    # softclamp
+
+    if softclamp_qk_sim:
+        sim = softclamp(sim, softclamp_value)
 
     # masking
 

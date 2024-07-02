@@ -15,6 +15,7 @@ from ring_attention_pytorch import (
 @click.option('--dim-head', default = 16)
 @click.option('--heads', default = 2)
 @click.option('--rand-key-pad-mask', is_flag = True)
+@click.option('--softclamp-qk-sim', is_flag = True)
 @click.option('--bucket_size', default = 4)
 @click.option('--cuda-kernel', is_flag = True)
 def test(
@@ -24,6 +25,7 @@ def test(
     heads: int,
     rand_key_pad_mask: bool,
     bucket_size: int,
+    softclamp_qk_sim: bool,
     cuda_kernel: bool
 ):
     # base qkv
@@ -58,8 +60,8 @@ def test(
 
     # forward
 
-    o = default_attention(rq, rk, rv, causal = causal, mask = mask)
-    fo = ring_flash_attn(fq, fk, fv, bucket_size = bucket_size, causal = causal, mask = mask)
+    o = default_attention(rq, rk, rv, causal = causal, mask = mask, softclamp_qk_sim = softclamp_qk_sim)
+    fo = ring_flash_attn(fq, fk, fv, bucket_size = bucket_size, causal = causal, mask = mask, softclamp_qk_sim = softclamp_qk_sim)
 
     assert torch.allclose(o, fo, atol = 1e-6)
 
