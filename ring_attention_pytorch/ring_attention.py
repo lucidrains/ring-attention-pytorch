@@ -406,7 +406,7 @@ class RingAttention(Module):
         # rotary relative positions
 
         if not exists(rotary_emb) and exists(self.rotary_embed):
-            rotary_emb = self.rotary_embed(q.shape[-2])
+            rotary_emb = self.rotary_embed(q.shape[-3])
 
         if exists(rotary_emb):
             q = apply_rotary_pos_emb(rotary_emb, q)
