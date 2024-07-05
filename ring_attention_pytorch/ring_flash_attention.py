@@ -29,6 +29,9 @@ EPSILON = 1e-10
 def exists(val):
     return val is not None
 
+def log(t, eps = 1e-20):
+    return t.clamp(min = eps).log()
+
 def default(val, d):
     return val if exists(val) else d
 
@@ -46,7 +49,7 @@ def maybe_split(t, size, dim = -2):
     return t.split(size, dim = dim)
 
 def softclamp(t, value):
-    return (t / value).tan() * value
+    return (t / value).tanh() * value
 
 # ring + (flash) attention forwards and backwards
 
@@ -321,7 +324,6 @@ class RingFlashAttentionFunction(Function):
 
                     if softclamp_qk_sim:
                         attn_weights = softclamp(attn_weights, softclamp_value)
-                        softclamped_attn_weights = attn_weights.clone()
 
                     if causal:
                         if (row_bucket_index - col_bucket_index) > num_lookback_buckets:
@@ -351,10 +353,11 @@ class RingFlashAttentionFunction(Function):
 
                     ds = p * scale * (dp - Dc)
 
-                    # backwards of tanh(x) for softclamping is (1 + tanh(x)^2)
+                    # backwards of tanh(x) for softclamping is (1. - tanh(x)^2)
 
                     if softclamp_qk_sim:
-                        ds *= (softclamped_attn_weights / softclamp_value) ** 2 + 1
+                        attn_weights = (log(p) + lsec) / softclamp_value
+                        ds *= (1. - attn_weights ** 2)
 
                     # dq and dk chunks
 

@@ -42,7 +42,7 @@ def divisible_by(num, den):
     return (num % den) == 0
 
 def softclamp(t, value):
-    return (t / value).tan() * value
+    return (t / value).tanh() * value
 
 @beartype
 def default_attention(
