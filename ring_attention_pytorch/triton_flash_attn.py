@@ -515,6 +515,8 @@ def _bwd_kernel_one_col_block(
     BIAS_TYPE: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
     CAUSAL_MASK_DIAGONAL: tl.constexpr,
+    SOFTCLAMP_QK_SIM: tl.constexpr,
+    SOFTCLAMP_VALUE: tl.constexpr,
     BLOCK_HEADDIM: tl.constexpr,
     EVEN_M: tl.constexpr,
     EVEN_N: tl.constexpr,
@@ -604,6 +606,13 @@ def _bwd_kernel_one_col_block(
                 )
         # recompute p = softmax(qk, dim=-1).T
         qk = tl.dot(q, tl.trans(k))
+
+        if SOFTCLAMP_QK_SIM:
+            effective_softclamp_value = SOFTCLAMP_VALUE / softmax_scale
+            qk /= effective_softclamp_value
+            qk = libdevice.tanh(qk)
+            qk *= effective_softclamp_value
+
         # Trying to combine the two masks seem to make the result wrong
         if not EVEN_N:  # Need to mask out otherwise the softmax is wrong
             qk = tl.where(offs_n[None, :] < seqlen_k, qk, float("-inf"))
@@ -683,6 +692,7 @@ def _bwd_kernel_one_col_block(
         # Converting ds to q.dtype here reduces register pressure and makes it much faster
         # for BLOCK_HEADDIM=128
         ds = (p * (dp - Di[:, None]) * softmax_scale).to(q.dtype)
+
         # compute dk = dot(ds.T, q)
         dk += tl.dot(tl.trans(ds), q)
         # compute dq
@@ -842,6 +852,8 @@ def _bwd_kernel(
     BIAS_TYPE: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
     CAUSAL_MASK_DIAGONAL: tl.constexpr,
+    SOFTCLAMP_QK_SIM: tl.constexpr,
+    SOFTCLAMP_VALUE: tl.constexpr,
     BLOCK_HEADDIM: tl.constexpr,
     SEQUENCE_PARALLEL: tl.constexpr,
     EVEN_M: tl.constexpr,
@@ -897,6 +909,8 @@ def _bwd_kernel(
                 BIAS_TYPE=BIAS_TYPE,
                 IS_CAUSAL=IS_CAUSAL,
                 CAUSAL_MASK_DIAGONAL = CAUSAL_MASK_DIAGONAL,
+                SOFTCLAMP_QK_SIM = SOFTCLAMP_QK_SIM,
+                SOFTCLAMP_VALUE = SOFTCLAMP_VALUE,
                 BLOCK_HEADDIM=BLOCK_HEADDIM,
                 EVEN_M=EVEN_M,
                 EVEN_N=EVEN_N,
@@ -934,6 +948,8 @@ def _bwd_kernel(
             BIAS_TYPE=BIAS_TYPE,
             IS_CAUSAL=IS_CAUSAL,
             CAUSAL_MASK_DIAGONAL = CAUSAL_MASK_DIAGONAL,
+            SOFTCLAMP_QK_SIM = SOFTCLAMP_QK_SIM,
+            SOFTCLAMP_VALUE = SOFTCLAMP_VALUE,
             BLOCK_HEADDIM=BLOCK_HEADDIM,
             EVEN_M=EVEN_M,
             EVEN_N=EVEN_N,
@@ -952,11 +968,13 @@ def flash_attn_backward(
     dq,
     dk,
     dv,
-    delta=None,
-    bias=None,
-    causal=False,
-    causal_mask_diagonal=False,
-    softmax_scale=None
+    delta = None,
+    bias = None,
+    causal = False,
+    causal_mask_diagonal = False,
+    softmax_scale = None,
+    softclamp_qk_sim = False,
+    softclamp_value = 50.
 ):
     # Make sure that the last dimension is contiguous
     if do.stride(-1) != 1:
@@ -1070,6 +1088,8 @@ def flash_attn_backward(
         bias_type,
         causal,
         causal_mask_diagonal,
+        softclamp_qk_sim,
+        softclamp_value,
         BLOCK_HEADDIM,
         # SEQUENCE_PARALLEL=False,
         # BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,

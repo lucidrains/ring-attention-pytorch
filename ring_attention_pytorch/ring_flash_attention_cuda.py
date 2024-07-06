@@ -226,7 +226,7 @@ class RingFlashAttentionCUDAFunction(Function):
             ring_size,
             q_head_groups,
             softclamp_qk_sim,
-            softclamp_scale,
+            softclamp_value,
             dtype
         ) = ctx.args
 
@@ -322,7 +322,9 @@ class RingFlashAttentionCUDAFunction(Function):
                         bias = bias,
                         causal = block_causal,
                         causal_mask_diagonal = causal_mask_diagonal,
-                        softmax_scale = softmax_scale
+                        softmax_scale = softmax_scale,
+                        softclamp_qk_sim = softclamp_qk_sim,
+                        softclamp_value = softclamp_value,
                     )
 
                 # account for grouped query attention

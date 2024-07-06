@@ -86,9 +86,9 @@ def test(
     assert torch.allclose(rv.grad, fv.grad, atol = 1e-6)
 
     if cuda_kernel:
+        assert torch.allclose(rv.grad, fcv.grad.cpu(), atol = 1e-2)
         assert torch.allclose(rq.grad, fcq.grad.cpu(), atol = 1e-2)
         assert torch.allclose(rk.grad, fck.grad.cpu(), atol = 1e-2)
-        assert torch.allclose(rv.grad, fcv.grad.cpu(), atol = 1e-2)
 
     print('✅ outputs and gradients are same between regular attention and naive flash attention')
 
