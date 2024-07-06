@@ -52,7 +52,7 @@ def default_attention(
     mask: Tensor | None = None,
     causal: bool = False,
     softclamp_qk_sim: bool = False,
-    softclamp_value: float = 30.
+    softclamp_value: float = 50.
 ):
     device = q.device
     q = q * (q.shape[-1] ** -0.5)

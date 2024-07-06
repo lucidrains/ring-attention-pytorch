@@ -52,7 +52,9 @@ class RingFlashAttentionCUDAFunction(Function):
         ring_reduce_col: bool,
         striped_ring_attn: bool,
         max_lookback_seq_len: int | None,
-        ring_size: int | None
+        ring_size: int | None,
+        softclamp_qk_sim: bool,
+        softclamp_value: float
     ):
         from ring_attention_pytorch.triton_flash_attn import flash_attn_forward
 
@@ -172,7 +174,9 @@ class RingFlashAttentionCUDAFunction(Function):
                 softmax_scale = softmax_scale,
                 causal_mask_diagonal = causal_mask_diagonal,
                 return_normalized_output = can_fuse_final_output_normalization and is_last,
-                load_accumulated = not is_first
+                load_accumulated = not is_first,
+                softclamp_qk_sim = softclamp_qk_sim,
+                softclamp_value = softclamp_value
             )
 
         if not can_fuse_final_output_normalization:
@@ -192,6 +196,8 @@ class RingFlashAttentionCUDAFunction(Function):
             striped_ring_attn,
             ring_size,
             q_head_groups,
+            softclamp_qk_sim,
+            softclamp_value,
             dtype
         )
 
@@ -219,6 +225,8 @@ class RingFlashAttentionCUDAFunction(Function):
             striped_ring_attn,
             ring_size,
             q_head_groups,
+            softclamp_qk_sim,
+            softclamp_scale,
             dtype
         ) = ctx.args
 
@@ -338,7 +346,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
         dq, dk, dv = map(lambda t: t.to(dtype), (dq, dk, dv))
 
-        return dq, dk, dv, None, None, None, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None, None, None, None, None
 
 ring_flash_attn_cuda_ = RingFlashAttentionCUDAFunction.apply
 
@@ -354,6 +362,8 @@ def ring_flash_attn_cuda(
     ring_reduce_col: bool = False,
     striped_ring_attn: bool = False,
     max_lookback_seq_len: int | None = None,
-    ring_size: int | None = None
+    ring_size: int | None = None,
+    softclamp_qk_sim: bool = False,
+    softclamp_value: float = 50.
 ):
-    return ring_flash_attn_cuda_(q, k, v, mask, causal, bucket_size, ring_reduce_col, striped_ring_attn, max_lookback_seq_len, ring_size)
+    return ring_flash_attn_cuda_(q, k, v, mask, causal, bucket_size, ring_reduce_col, striped_ring_attn, max_lookback_seq_len, ring_size, softclamp_qk_sim, softclamp_value)

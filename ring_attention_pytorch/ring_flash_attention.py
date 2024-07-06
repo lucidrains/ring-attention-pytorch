@@ -400,6 +400,6 @@ def ring_flash_attn(
     max_lookback_seq_len: int | None = None,
     ring_size: int | None = None,
     softclamp_qk_sim: bool = False,
-    softclamp_value: float = 30.
+    softclamp_value: float = 50.
 ):
     return ring_flash_attn_(q, k, v, mask, causal, bucket_size, ring_reduce_col, striped_ring_attn, max_lookback_seq_len, ring_size, softclamp_qk_sim, softclamp_value)

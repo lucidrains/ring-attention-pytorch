@@ -33,6 +33,7 @@ assert pkg_version.parse(triton_version) >= pkg_version.parse('2.1'), 'triton mu
 
 import triton
 import triton.language as tl
+from triton.language.extra import libdevice
 
 # kernels
 
@@ -80,6 +81,8 @@ def _fwd_kernel(
     CAUSAL_MASK_DIAGONAL: tl.constexpr,
     LOAD_ACCUMULATED: tl.constexpr,
     RETURN_NORMALIZED_OUTPUT: tl.constexpr,
+    SOFTCLAMP_QK_SIM: tl.constexpr,
+    SOFTCLAMP_VALUE: tl.constexpr,
     BLOCK_HEADDIM: tl.constexpr,
     EVEN_M: tl.constexpr,
     EVEN_N: tl.constexpr,
@@ -196,6 +199,12 @@ def _fwd_kernel(
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         qk += tl.dot(q, tl.trans(k))
 
+        if SOFTCLAMP_QK_SIM:
+            effective_softclamp_value = SOFTCLAMP_VALUE / softmax_scale
+            qk /= effective_softclamp_value
+            qk = libdevice.tanh(qk)
+            qk *= effective_softclamp_value
+
         if not EVEN_N:
             qk += tl.where((start_n + offs_n)[None, :] < seqlen_k, 0, float("-inf"))
 
@@ -299,7 +308,9 @@ def flash_attn_forward(
     softmax_scale = None,
     causal_mask_diagonal = False,
     return_normalized_output = False,
-    load_accumulated = True
+    load_accumulated = True,
+    softclamp_qk_sim = False,
+    softclamp_value = 50.
 ):
     q, k, v = [x if is_contiguous(x) else x.contiguous() for x in (q, k, v)]
 
@@ -387,6 +398,8 @@ def flash_attn_forward(
         causal_mask_diagonal,
         load_accumulated,
         return_normalized_output,
+        softclamp_qk_sim,
+        softclamp_value,
         BLOCK_HEADDIM,
         BLOCK_M = BLOCK,
         BLOCK_N = BLOCK,

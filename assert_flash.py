@@ -71,7 +71,7 @@ def test(
         if mask is not None:
             mask = mask.cuda()
 
-        fco = ring_flash_attn_cuda(fcq, fck, fcv, mask, causal)
+        fco = ring_flash_attn_cuda(fcq, fck, fcv, mask, causal, softclamp_qk_sim = softclamp_qk_sim)
         fco.sum().backward()
 
         assert torch.allclose(o, fco.cpu(), atol = 1e-2)
