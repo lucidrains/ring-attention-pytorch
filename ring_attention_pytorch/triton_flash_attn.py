@@ -611,6 +611,7 @@ def _bwd_kernel_one_col_block(
             effective_softclamp_value = SOFTCLAMP_VALUE / softmax_scale
             qk /= effective_softclamp_value
             qk = libdevice.tanh(qk)
+            dtanh = 1. - qk * qk
             qk *= effective_softclamp_value
 
         # Trying to combine the two masks seem to make the result wrong
@@ -691,7 +692,12 @@ def _bwd_kernel_one_col_block(
         Di = tl.load(D + offs_m_curr)
         # Converting ds to q.dtype here reduces register pressure and makes it much faster
         # for BLOCK_HEADDIM=128
-        ds = (p * (dp - Di[:, None]) * softmax_scale).to(q.dtype)
+        ds = (p * (dp - Di[:, None]) * softmax_scale)
+
+        if SOFTCLAMP_QK_SIM:
+            ds *= dtanh
+
+        ds = ds.to(q.dtype)
 
         # compute dk = dot(ds.T, q)
         dk += tl.dot(tl.trans(ds), q)
