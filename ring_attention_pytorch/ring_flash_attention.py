@@ -324,6 +324,7 @@ class RingFlashAttentionFunction(Function):
 
                     if softclamp_qk_sim:
                         attn_weights = softclamp(attn_weights, softclamp_value)
+                        softclamp_output = attn_weights.clone()
 
                     if causal:
                         if (row_bucket_index - col_bucket_index) > num_lookback_buckets:
@@ -356,7 +357,7 @@ class RingFlashAttentionFunction(Function):
                     # backwards of tanh(x) for softclamping is (1. - tanh(x)^2)
 
                     if softclamp_qk_sim:
-                        attn_weights = (log(p) + lsec) / softclamp_value
+                        attn_weights = softclamp_output / softclamp_value
                         ds *= (1. - attn_weights ** 2)
 
                     # dq and dk chunks
