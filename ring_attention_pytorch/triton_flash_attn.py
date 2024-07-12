@@ -19,6 +19,8 @@ def default(val, d):
 def is_contiguous(x: Tensor):
     return x.stride(-1) == 1
 
+INSTALL_COMMAND = 'pip install -U --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/Triton-Nightly/pypi/simple/ triton-nightly'
+
 # make sure triton 2.1+ is installed
 
 import packaging.version as pkg_version
@@ -26,10 +28,13 @@ import packaging.version as pkg_version
 import importlib
 from importlib.metadata import version
 
-assert exists(importlib.util.find_spec('triton')), 'latest triton must be installed. `pip install triton -U` first'
+try:
+    triton_version = version('triton-nightly')
+except:
+    print(f'latest triton must be installed. `{INSTALL_COMMAND}` first')
+    exit()
 
-triton_version = version('triton-nightly')
-assert pkg_version.parse(triton_version) >= pkg_version.parse('3.0.0'), 'triton must be version 3.0.0 or above. `pip install -U --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/Triton-Nightly/pypi/simple/ triton-nightly` to upgrade'
+assert pkg_version.parse(triton_version) >= pkg_version.parse('3.0.0'), f'triton must be version 3.0.0 or above. `{INSTALL_COMMAND}` to upgrade'
 
 import triton
 import triton.language as tl
