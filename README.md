@@ -170,4 +170,13 @@ $ python assert.py --use-cuda --causal --striped-ring-attn
 }
 ```
 
+```bibtex
+@inproceedings{Shyam2024TreeAT,
+    title   = {Tree Attention: Topology-aware Decoding for Long-Context Attention on GPU clusters},
+    author  = {Vasudev Shyam and Jonathan Pilault and Emily Shepperd and Quentin Anthony and Beren Millidge},
+    year    = {2024},
+    url     = {https://api.semanticscholar.org/CorpusID:271769078}
+}
+```
+
 *<a href="http://www.incompleteideas.net/IncIdeas/BitterLesson.html">The Bitter Lesson</a>* - Richard Sutton
