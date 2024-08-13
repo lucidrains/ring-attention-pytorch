@@ -2,7 +2,13 @@ import torch
 from torch import einsum
 import torch.distributed as dist
 
-def tree_attn_decode(q, k, v):
+@torch.no_grad()
+def tree_attn_decode(q, k, v, eps = 1e-8):
+
+    assert k.shape[:-1] == v.shape[:-1]
+    assert q.shape[-2:] == (1, k.shape[-1])
+    assert q.shape[:-2] == k.shape[:-2]
+
     """
     Algorithm 3 proposed in Tree Attention
     https://arxiv.org/abs/2408.04093
@@ -14,7 +20,7 @@ def tree_attn_decode(q, k, v):
     # scale queries
 
     scale = q.shape[-1] ** -0.5
-    q = q * scale
+    q *= scale
 
     # each machine (rank) takes care of a chunk of kv sequence within the world of many machines
 
@@ -28,7 +34,7 @@ def tree_attn_decode(q, k, v):
     sim = einsum('... i d, ... j d -> ... i j', q, k)
 
     local_max = sim.amax(dim = -1, keepdim = True)
-    sim = sim - local_max
+    sim -= local_max
     lse = sim.logsumexp(dim = -1, keepdim = True)
 
     attn = sim.softmax(dim = -1)
@@ -46,12 +52,12 @@ def tree_attn_decode(q, k, v):
 
     renorm_factor = (local_max - global_max).exp()
 
-    den = den * renorm_factor
-    num = num * renorm_factor
+    den *= renorm_factor
+    num *= renorm_factor
 
     # second and third all reduce (sum)
 
     dist.all_reduce(den)
     dist.all_reduce(num)
 
-    return num / den
+    return num / den.clamp(min = eps)
