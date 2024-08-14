@@ -87,7 +87,6 @@ def start(
     tree_out = tree_out.cpu()
     out = out.cpu()
 
-    print((tree_out - out).abs().amax())
     output_atol = 1e-2 if use_cuda else 1e-5
 
     assert torch.allclose(tree_out, out, atol = output_atol), '🟥 output is not the same'

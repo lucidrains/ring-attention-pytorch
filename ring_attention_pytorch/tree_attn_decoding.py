@@ -42,13 +42,15 @@ def tree_attn_decode(
     # each machine (rank) takes care of a chunk of kv sequence within the world of many machines
 
     if shard_kv_seq:
+        assert exists(k), 'keys and values must be passed if not already sharded across sequence'
+
         rank, world_size = get_rank(), get_world_size()
         k = k.chunk(world_size, dim = -2)
         v = v.chunk(world_size, dim = -2)
 
         k, v = (k[rank], v[rank]) if rank < len(k) else (None, None)
 
-    if exists(k) and exists(v):
+    if exists(k):
         # calculate local output and derive numerator and denominator
 
         use_triton = default(use_triton, q.is_cuda)
