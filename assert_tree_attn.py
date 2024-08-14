@@ -61,6 +61,9 @@ def start(
     k = torch.randn(batch, heads, seq_len, dim)
     v = torch.randn(batch, heads, seq_len, dim)
 
+    if use_cuda:
+        q, k, v = tuple(t.cuda(rank) for t in (q, k, v))
+
     # easy forcing all q, k, v to be same across all device
 
     dist.all_reduce(q)
