@@ -8,7 +8,7 @@ from math import ceil
 import torch
 from torch import Tensor
 
-from einops import repeat
+from einops import repeat, rearrange
 
 def exists(v):
     return v is not None
@@ -315,9 +315,17 @@ def flash_attn_forward(
     return_normalized_output = False,
     load_accumulated = True,
     softclamp_qk_sim = False,
-    softclamp_value = 50.
+    softclamp_value = 50.,
+    head_first_dim = False,
+    remove_padding = False
 ):
     q, k, v = [x if is_contiguous(x) else x.contiguous() for x in (q, k, v)]
+
+    if head_first_dim:
+        q, k, v = tuple(rearrange(t, 'b n h d -> b h n d') for t in (q, k, v))
+
+        if exists(o):
+            o = rearrange(o, 'b n h d -> b h n d')
 
     batch, seqlen_q, nheads, d = q.shape
     _, seqlen_k, _, _ = k.shape
@@ -411,6 +419,13 @@ def flash_attn_forward(
         num_warps = num_warps,
         num_stages = 1,
     )
+
+    if head_first_dim:
+        o = rearrange(o, 'b h n d -> b n h d')
+
+    if remove_padding:
+        m = m[..., :seqlen_q]
+        lse = lse[..., :seqlen_q]
 
     return o, m, lse
 

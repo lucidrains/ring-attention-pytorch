@@ -57,9 +57,9 @@ def start(
 
     # inputs
 
-    q = torch.randn(batch, heads, 1, dim)
-    k = torch.randn(batch, heads, seq_len, dim)
-    v = torch.randn(batch, heads, seq_len, dim)
+    q = torch.randn(batch, heads, 1, dim).half()
+    k = torch.randn(batch, heads, seq_len, dim).half()
+    v = torch.randn(batch, heads, seq_len, dim).half()
 
     if use_cuda:
         q, k, v = tuple(t.cuda(rank) for t in (q, k, v))
@@ -74,6 +74,8 @@ def start(
 
     out = regular_decode(q, k, v)
     tree_out = tree_attn_decode(q, k, v)
+
+    out = out.to(tree_out.dtype)
 
     # if not main early return
 
@@ -95,7 +97,7 @@ def start(
 
 @click.command()
 @click.option('--world-size', default = 8, help = 'number of machines / processes')
-@click.option('--dim', default = 512, help = 'dimension')
+@click.option('--dim', default = 64, help = 'dimension')
 @click.option('--heads', default = 8, help = 'dimension')
 @click.option('--batch', default = 1, help = 'dimension')
 @click.option('--use-cuda', is_flag = True, help = 'whether to test with CUDA and NCCL')
