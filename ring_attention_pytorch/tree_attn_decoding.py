@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import torch
-from torch import einsum
+from torch import einsum, Tensor
 import torch.distributed as dist
 
 from ring_attention_pytorch.distributed import get_rank, get_world_size
@@ -16,15 +18,19 @@ def default(v, d):
 
 @torch.no_grad()
 def tree_attn_decode(
-    q, k, v,
+    q: Tensor,
+    k: Tensor | None = None,
+    v: Tensor | None = None,
     eps = 1e-8,
     shard_kv_seq = False,
     use_triton = None
 ):
+    assert not (exists(k) ^ exists(v)), 'keys and values are either both None, or both present'
 
-    assert k.shape[:-1] == v.shape[:-1]
-    assert q.shape[-2:] == (1, k.shape[-1])
-    assert q.shape[:-2] == k.shape[:-2]
+    if exists(k):
+        assert k.shape[:-1] == v.shape[:-1]
+        assert q.shape[-2:] == (1, k.shape[-1])
+        assert q.shape[:-2] == k.shape[:-2]
 
     """
     Algorithm 3 proposed in Tree Attention
@@ -46,6 +52,7 @@ def tree_attn_decode(
         # calculate local output and derive numerator and denominator
 
         use_triton = default(use_triton, q.is_cuda)
+        assert not (use_triton and not q.is_cuda), 'input needs to be on cuda if forcing the use of triton'
 
         if use_triton and q.is_cuda:
             from ring_attention_pytorch.triton_flash_attn import flash_attn_forward

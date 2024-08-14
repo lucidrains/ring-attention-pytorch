@@ -57,12 +57,12 @@ def start(
 
     # inputs
 
-    q = torch.randn(batch, heads, 1, dim).half()
-    k = torch.randn(batch, heads, seq_len, dim).half()
-    v = torch.randn(batch, heads, seq_len, dim).half()
+    q = torch.randn(batch, heads, 1, dim)
+    k = torch.randn(batch, heads, seq_len, dim)
+    v = torch.randn(batch, heads, seq_len, dim)
 
     if use_cuda:
-        q, k, v = tuple(t.cuda(rank) for t in (q, k, v))
+        q, k, v = tuple(t.cuda(rank).half() for t in (q, k, v))
 
     # easy forcing all q, k, v to be same across all device
 
@@ -87,6 +87,7 @@ def start(
     tree_out = tree_out.cpu()
     out = out.cpu()
 
+    print((tree_out - out).abs().amax())
     output_atol = 1e-2 if use_cuda else 1e-5
 
     assert torch.allclose(tree_out, out, atol = output_atol), '🟥 output is not the same'
