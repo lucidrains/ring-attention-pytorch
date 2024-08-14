@@ -25,6 +25,8 @@ def tree_attn_decode(
     shard_kv_seq = False,
     use_triton = None
 ):
+    dtype = q.dtype
+
     assert not (exists(k) ^ exists(v)), 'keys and values are either both None, or both present'
 
     if exists(k):
@@ -36,8 +38,6 @@ def tree_attn_decode(
     Algorithm 3 proposed in Tree Attention
     https://arxiv.org/abs/2408.04093
     """
-
-    dim_v = v.shape[-1]
 
     # each machine (rank) takes care of a chunk of kv sequence within the world of many machines
 
@@ -59,7 +59,7 @@ def tree_attn_decode(
         if use_triton and q.is_cuda:
             from ring_attention_pytorch.triton_flash_attn import flash_attn_forward
 
-            out, local_max, lse = flash_attn_forward(
+            local_out, local_max, lse = flash_attn_forward(
                 q, k, v,
                 causal = False,
                 return_normalized_output = True,
@@ -77,16 +77,16 @@ def tree_attn_decode(
             lse = sim.logsumexp(dim = -1, keepdim = True)
 
             attn = sim.softmax(dim = -1)
-            out = einsum('... i j, ... j d -> ... i d', attn, v)
+            local_out = einsum('... i j, ... j d -> ... i d', attn, v)
 
         den = lse.exp()
-        num = out * den
+        num = local_out.float() * den
 
     else:
         # handle edge case where seq length < world size
 
-        num = q.new_zeros((*q.shape[:-1], dim_v))
-        den = q.new_zeros((*q.shape[:-1], 1))
+        num = q.new_zeros((*q.shape[:-1], v.shape[-1]), dtype = torch.float32)
+        den = q.new_zeros((*q.shape[:-1], 1), dtype = torch.float32)
         local_max = torch.zeros_like(den)
 
     # first get global max through an all reduce (max)
@@ -106,4 +106,6 @@ def tree_attn_decode(
     dist.all_reduce(den)
     dist.all_reduce(num)
 
-    return num / den.clamp(min = eps)
+    out = num.div_(den.clamp(min = eps))
+
+    return out.type(dtype)
