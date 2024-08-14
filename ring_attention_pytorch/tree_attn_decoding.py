@@ -2,8 +2,17 @@ import torch
 from torch import einsum
 import torch.distributed as dist
 
+from ring_attention_pytorch.distributed import get_rank, get_world_size
+
+def exists(v):
+    return v is not None
+
 @torch.no_grad()
-def tree_attn_decode(q, k, v, eps = 1e-8):
+def tree_attn_decode(
+    q, k, v,
+    eps = 1e-8,
+    shard_kv_seq = False
+):
 
     assert k.shape[:-1] == v.shape[:-1]
     assert q.shape[-2:] == (1, k.shape[-1])
@@ -16,8 +25,8 @@ def tree_attn_decode(q, k, v, eps = 1e-8):
 
     device, dim_v = q.device, v.shape[-1]
 
-    rank = dist.get_rank() if dist.is_initialized() else 0
-    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    rank = get_rank()
+    world_size = get_world_size()
 
     # scale queries
 
@@ -26,12 +35,12 @@ def tree_attn_decode(q, k, v, eps = 1e-8):
 
     # each machine (rank) takes care of a chunk of kv sequence within the world of many machines
 
-    k = k.chunk(world_size, dim = -2)
-    v = v.chunk(world_size, dim = -2)
+    if shard_kv_seq:
+        k = k.chunk(world_size, dim = -2)
+        v = v.chunk(world_size, dim = -2)
+        k, v = (k[rank], v[rank]) if rank < len(k) else (None, None)
 
-    if rank < len(k):
-        k, v = k[rank], v[rank]
-
+    if exists(k) and exists(v):
         # calculate local output and derive numerator and denominator
 
         sim = einsum('... i d, ... j d -> ... i j', q, k)

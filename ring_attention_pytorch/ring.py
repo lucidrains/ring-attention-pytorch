@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from functools import lru_cache, partial, wraps
+from functools import wraps, partial
 from collections import namedtuple
 
 import torch
@@ -9,6 +9,7 @@ from torch.nn import Module, ModuleList
 from torch.autograd import Function
 
 import torch.distributed as dist
+from ring_attention_pytorch.distributed import get_rank, get_world_size, is_distributed
 
 # helper functions
 
@@ -20,22 +21,6 @@ def default(v, d):
 
 def cast_tuple(t, length = 1):
     return t if isinstance(t, tuple) else ((t,) * length)
-
-cache = partial(lru_cache, maxsize = None)
-
-# distributed globals
-
-@cache()
-def get_rank():
-    return dist.get_rank() if dist.is_initialized() else 0
-
-@cache()
-def get_world_size():
-    return dist.get_world_size() if dist.is_initialized() else 1
-
-@cache()
-def is_distributed():
-    return dist.is_initialized() and dist.get_world_size() > 1
 
 # ring functions
 

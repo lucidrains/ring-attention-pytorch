@@ -1,3 +1,5 @@
+from functools import partial, lru_cache
+
 import torch
 from torch import nn
 from torch.nn import Module
@@ -19,6 +21,22 @@ def pad_dim_to(t, length, dim = 0):
     pad_length = length - t.shape[dim]
     zero_pairs = (-dim - 1) if dim < 0 else (t.ndim - dim - 1)
     return F.pad(t, (*((0, 0) * zero_pairs), 0, pad_length))
+
+cache = partial(lru_cache, maxsize = None)
+
+# distributed helpers
+
+@cache()
+def get_rank():
+    return dist.get_rank() if dist.is_initialized() else 0
+
+@cache()
+def get_world_size():
+    return dist.get_world_size() if dist.is_initialized() else 1
+
+@cache()
+def is_distributed():
+    return dist.is_initialized() and dist.get_world_size() > 1
 
 def all_gather_same_dim(t):
     t = t.contiguous()
