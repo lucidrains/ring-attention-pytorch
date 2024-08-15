@@ -322,10 +322,10 @@ def flash_attn_forward(
     q, k, v = [x if is_contiguous(x) else x.contiguous() for x in (q, k, v)]
 
     if head_first_dim:
-        q, k, v = tuple(rearrange(t, 'b n h d -> b h n d') for t in (q, k, v))
+        q, k, v = tuple(rearrange(t, 'b h n d -> b n h d') for t in (q, k, v))
 
         if exists(o):
-            o = rearrange(o, 'b n h d -> b h n d')
+            o = rearrange(o, 'b h n d -> b n h d')
 
     batch, seqlen_q, nheads, d = q.shape
     _, seqlen_k, _, _ = k.shape
@@ -421,7 +421,7 @@ def flash_attn_forward(
     )
 
     if head_first_dim:
-        o = rearrange(o, 'b h n d -> b n h d')
+        o = rearrange(o, 'b n h d -> b h n d')
 
     if remove_padding:
         m = m[..., :seqlen_q]
