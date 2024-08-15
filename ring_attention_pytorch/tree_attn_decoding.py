@@ -6,6 +6,8 @@ import torch.distributed as dist
 
 from ring_attention_pytorch.distributed import get_rank, get_world_size
 
+from ring_attention_pytorch.tensor_typing import Float
+
 # functions
 
 def exists(v):
@@ -18,21 +20,17 @@ def default(v, d):
 
 @torch.no_grad()
 def tree_attn_decode(
-    q: Tensor,
-    k: Tensor | None = None,
-    v: Tensor | None = None,
+    q: Float['b h 1 d'],
+    k: Float['b h n d'] | None = None,
+    v: Float['b h n dv'] | None = None,
     eps = 1e-8,
-    shard_kv_seq = False,
+    shard_kv_seq = True,
     use_triton = None
-):
-    dtype = q.dtype
+) -> Float['b h 1 dv']:
+
+    q_prec_dims, dtype = q.shape[:-1], q.dtype
 
     assert not (exists(k) ^ exists(v)), 'keys and values are either both None, or both present'
-
-    if exists(k):
-        assert k.shape[:-1] == v.shape[:-1]
-        assert q.shape[-2:] == (1, k.shape[-1])
-        assert q.shape[:-2] == k.shape[:-2]
 
     """
     Algorithm 3 proposed in Tree Attention
@@ -43,6 +41,7 @@ def tree_attn_decode(
 
     if shard_kv_seq:
         assert exists(k), 'keys and values must be passed if not already sharded across sequence'
+        dim_v = v.shape[-1]
 
         rank, world_size = get_rank(), get_world_size()
         k = k.chunk(world_size, dim = -2)
@@ -68,6 +67,7 @@ def tree_attn_decode(
                 remove_padding = True
             )
 
+            lse = rearrange(lse, '... -> ... 1')
         else:
             scale = q.shape[-1] ** -0.5
             sim = einsum('... i d, ... j d -> ... i j', q, k) * scale
@@ -79,8 +79,8 @@ def tree_attn_decode(
     else:
         # handle edge case where seq length < world size
 
-        local_out = q.new_zeros((*q.shape[:-1], v.shape[-1]), dtype = torch.float32)
-        lse = torch.full_like(den, -torch.finfo(torch.float32).max)
+        local_out = q.new_zeros((*q_prec_dims, dim_v), dtype = torch.float32)
+        lse = torch.full((*q_prec_dims, 1), -torch.finfo(torch.float32).max, device = q.device, dtype = torch.float32)
 
     # first get max(lse) through an all reduce
 
