@@ -48,6 +48,16 @@ attended = attn(tokens)
 assert attended.shape == tokens.shape
 ```
 
+This repository also contains an implementation of <a href="https://arxiv.org/abs/2408.04093">Tree Attention Decoding</a> from Shyam et al.
+
+It can be imported and used as follows
+
+```python
+from ring_attention_pytorch import tree_attn_decode
+
+out = tree_attn_decode(q, k, v) # where q, k, v exists across all machines
+```
+
 ## Test
 
 First install requirements
@@ -60,6 +70,12 @@ Then say testing autoregressive striped ring attention on cuda would be
 
 ```bash
 $ python assert.py --use-cuda --causal --striped-ring-attn
+```
+
+Testing tree attention would be
+
+```bash
+$ python assert_tree_attn.py --use-cuda --seq-len 8192
 ```
 
 ## Todo
