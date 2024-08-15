@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
   name = 'ring-attention-pytorch',
   packages = find_packages(exclude=[]),
-  version = '0.5.12',
+  version = '0.5.14',
   license='MIT',
   description = 'Ring Attention - Pytorch',
   author = 'Phil Wang',
@@ -18,7 +18,9 @@ setup(
   install_requires=[
     'beartype',
     'einops>=0.8.0',
-    'torch>=2.0'
+    'jaxtyping',
+    'torch>=2.0',
+    'triton>=3.0.0'
   ],
   classifiers=[
     'Development Status :: 4 - Beta',
