@@ -16,6 +16,8 @@ from ring_attention_pytorch.ring import (
     get_world_size
 )
 
+from ring_attention_pytorch.tensor_typing import Float
+
 # helper functions
 
 def exists(v):
@@ -26,6 +28,20 @@ def default(v, d):
 
 def divisible_by(num, den):
     return (num % den) == 0
+
+# pad sequence to 2 x <world size> for sharding
+
+def zig_zag_pad_seq(t):
+    seq_len = t.shape[-2]
+    chunks = 2 * get_world_size()
+
+    padded_seq_len = ceil(seq_len / chunks) * chunks
+    t = F.pad(t, (0, 0, 0, padded_seq_len - seq_len), value = 0.)
+
+    def inverse(out):
+        return out[..., :seq_len, :]
+
+    return t, inverse
 
 # zig zag sharding and its inverse
 
@@ -65,8 +81,13 @@ def zig_zag_shard(t, all_gather_batch = False):
 # zigzag attention
 # the context parallelism scheme used to train llama 3 https://arxiv.org/abs/2407.21783
 
-def zig_zag_attn(q, k, v):
-    device = q.device
+def zig_zag_attn(
+    q: Float['b h n dq'],
+    k: Float['b h j dq'],
+    v: Float['b h j dv']
+) -> Float['b h j dv']:
+
+    twice_chunk_size, device = q.shape[-2], q.device
     q = q * (q.shape[-1] ** -0.5)
 
     # account for grouped query attention
@@ -93,9 +114,25 @@ def zig_zag_attn(q, k, v):
     # masking
     # todo - handle specialized masking, and leverage flex attention if cuda
 
+    chunk_size = twice_chunk_size // 2
+    world_size, rank = get_world_size(), get_rank()
+
     mask_value = -torch.finfo(q.dtype).max
-    i, j = sim.shape[-2:]
-    causal_mask = torch.ones((i, j), dtype = torch.bool, device = device).triu(j - i + 1)
+    seq_len = sim.shape[-1]
+
+    full_causal_mask = torch.ones((seq_len, seq_len), dtype = torch.bool, device = device).triu(1)
+    forward_causal_mask, reverse_causal_mask = rearrange(full_causal_mask, '(i c1) (two j c2) -> two i c1 j c2', c1 = chunk_size, c2 = chunk_size, two = 2)
+
+    chunked_causal_mask = rearrange([
+        forward_causal_mask,
+        reverse_causal_mask.flip(dims = (-2,))
+    ] ,'two i c1 j c2 -> i c1 (j two c2)')
+
+    causal_mask = torch.cat((
+        chunked_causal_mask[rank],
+        chunked_causal_mask[(2 * world_size) - 1 - rank]
+    ), dim = -2)
+
     sim = torch.where(causal_mask, mask_value, sim)
 
     # attend

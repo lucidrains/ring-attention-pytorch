@@ -13,6 +13,7 @@ from ring_attention_pytorch.distributed import all_gather_variable_dim
 from einops import rearrange
 
 from ring_attention_pytorch.zig_zag_attention import (
+    zig_zag_pad_seq,
     zig_zag_attn,
     zig_zag_shard
 )
@@ -91,9 +92,10 @@ def start(
 
     # zig zag
 
-    inp, gather_seq = zig_zag_shard(zig_zag_input, all_gather_batch = True)
+    padded_inp, remove_pad = zig_zag_pad_seq(zig_zag_input)
+    padded_inp, gather_seq = zig_zag_shard(padded_inp, all_gather_batch = True)
 
-    qkv = attention.to_qkv(inp)
+    qkv = attention.to_qkv(padded_inp)
 
     q, k, v = rearrange(qkv, 'b n (h d) -> b h n d', d = dim_head).split(attention.qkv_head_breakdown, dim = -3)
 
@@ -101,9 +103,11 @@ def start(
 
     o = rearrange(o, 'b h n d -> b n (h d)')
 
-    zig_zag_out = attention.to_out(o)
+    padded_out = attention.to_out(o)
 
-    zig_zag_out = gather_seq(zig_zag_out)
+    padded_out = gather_seq(padded_out)
+
+    zig_zag_out = remove_pad(padded_out)
 
     zig_zag_out.mean().backward()
 

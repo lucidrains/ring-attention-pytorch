@@ -8,6 +8,8 @@ from torch.autograd import Function
 
 import torch.distributed as dist
 
+from einops import rearrange
+
 def exists(val):
     return val is not None
 
