@@ -84,7 +84,7 @@ def zig_zag_attn(q, k, v):
 
     # account for grouped query attention
 
-    heads, kv_heads = q.shape[-2], k.shape[-2]
+    heads, kv_heads = q.shape[1], k.shape[1]
     assert divisible_by(heads, kv_heads)
     q_head_groups = heads // kv_heads
 
@@ -97,11 +97,11 @@ def zig_zag_attn(q, k, v):
 
     # expand the keys and values to match all query attention heads
 
-    k, v = tuple(repeat(t, '... h d -> ... (g h) d', g = q_head_groups) for t in (k, v))
+    k, v = tuple(repeat(t, 'b h n d -> b (g h) n d', g = q_head_groups) for t in (k, v))
 
     # similarity
 
-    sim = einsum(q, k, 'b i h d, b j h d -> b h i j')
+    sim = einsum(q, k, 'b h i d, b h j d -> b h i j')
 
     # masking
     # todo - handle specialized masking, and leverage flex attention if cuda
@@ -117,6 +117,6 @@ def zig_zag_attn(q, k, v):
 
     # aggregate
 
-    out = einsum(attn, v, 'b h i j, b j h d -> b i h d')
+    out = einsum(attn, v, 'b h i j, b h j d -> b h i d')
 
     return out

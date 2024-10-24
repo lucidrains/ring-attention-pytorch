@@ -10,6 +10,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from ring_attention_pytorch import RingAttention
 from ring_attention_pytorch.distributed import all_gather_variable_dim
 
+from einops import rearrange
+
 from ring_attention_pytorch.zig_zag_attention import (
     zig_zag_pad_seq,
     zig_zag_attn,
@@ -90,7 +92,15 @@ def start(
 
     padded_zig_zag_input, gather_seq = zig_zag_shard(padded_zig_zag_input, all_gather_batch = True)
 
-    padded_zig_zag_out = ddp_attention(padded_zig_zag_input)
+    qkv = attention.to_qkv(padded_zig_zag_input)
+
+    q, k, v = rearrange(qkv, 'b n (h d) -> b h n d', d = dim_head).split(attention.qkv_head_breakdown, dim = -3)
+
+    o = zig_zag_attn(q, k, v)
+
+    o = rearrange(o, 'b h n d -> b n (h d)')
+
+    padded_zig_zag_out = attention.to_out(o)
 
     padded_zig_zag_out = gather_seq(padded_zig_zag_out)
 
