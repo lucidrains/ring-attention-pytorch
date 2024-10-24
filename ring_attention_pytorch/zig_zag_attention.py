@@ -27,20 +27,6 @@ def default(v, d):
 def divisible_by(num, den):
     return (num % den) == 0
 
-# pad sequence to 2 x <world size> for sharding
-
-def zig_zag_pad_seq(t):
-    seq_len = t.shape[-2]
-    chunks = 2 * get_world_size()
-
-    padded_seq_len = ceil(seq_len / chunks) * chunks
-    t = F.pad(t, (0, 0, 0, padded_seq_len - seq_len), value = 0.)
-
-    def inverse(out):
-        return out[..., :seq_len, :]
-
-    return t, inverse
-
 # zig zag sharding and its inverse
 
 def zig_zag_shard(t, all_gather_batch = False):
