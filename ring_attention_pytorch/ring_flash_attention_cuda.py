@@ -5,7 +5,7 @@ from math import ceil
 import torch
 from torch import nn, einsum, Tensor
 from torch.autograd.function import Function
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 
 from ring_attention_pytorch.ring import (
     ring_pass,
@@ -352,7 +352,7 @@ class RingFlashAttentionCUDAFunction(Function):
 
 ring_flash_attn_cuda_ = RingFlashAttentionCUDAFunction.apply
 
-@autocast(enabled = False)
+@autocast('cuda', enabled = False)
 @beartype
 def ring_flash_attn_cuda(
     q: Tensor,
