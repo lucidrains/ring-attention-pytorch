@@ -82,10 +82,10 @@ def zig_zag_shard(t, all_gather_batch = False):
 # the context parallelism scheme used to train llama 3 https://arxiv.org/abs/2407.21783
 
 def zig_zag_attn(
-    q: Float['b h n dq'],
+    q: Float['b qh i dq'],
     k: Float['b h j dq'],
     v: Float['b h j dv']
-) -> Float['b h j dv']:
+) -> Float['b qh i dv']:
 
     twice_chunk_size, device = q.shape[-2], q.device
     q = q * (q.shape[-1] ** -0.5)
