@@ -60,12 +60,13 @@ def zig_zag_shard(t, all_gather_batch = False):
 
     def inverse(two_chunks):
 
-        two_chunks = rearrange(two_chunks, '... (two chunk_size) d -> ... two chunk_size d', two = 2)
+        two_chunks = rearrange(two_chunks, 'b (two c) d -> b two c d', two = 2)
         all_chunks, _ = AllGather(dim = -3)(two_chunks)
 
-        first_half, second_half = rearrange(all_chunks, '... (num_chunks two) chunk_size d -> two ... (num_chunks chunk_size) d', two = 2)
+        first_half, second_half = rearrange(all_chunks, 'b (all_pairs two) c d -> two b all_pairs c d', two = 2)
 
-        out = torch.cat((first_half, second_half.flip(dims = (-2,))), dim = -2)
+        out = torch.cat((first_half, second_half.flip(dims = (-3,))), dim = -3)
+        out = rearrange(out, 'b n c d -> b (n c) d')
 
         if all_gather_batch:
             out = out.split(gather_sizes.tolist(), dim = 0)

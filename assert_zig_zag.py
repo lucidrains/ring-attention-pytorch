@@ -18,6 +18,9 @@ from ring_attention_pytorch.zig_zag_attention import (
     zig_zag_shard
 )
 
+def abs_diff(x, y):
+    return (x - y).abs().amax()
+
 def setup(
     rank,
     world_size,
@@ -56,6 +59,7 @@ def start(
         heads = heads,
         num_grouped_query_heads = num_grouped_query_heads,
         causal = True,
+        rotary_embed = False,
         ring_attn = False,
         use_cuda_kernel = use_cuda
     )
@@ -129,7 +133,7 @@ def start(
             atol = 1e-2
         ), 'grad is not the same'
 
-        print('✅ outputs and gradients are same between ring attention and non-ring attention')
+        print('✅ outputs and gradients are same between zig zag attention and regular attention')
 
     cleanup()
 
