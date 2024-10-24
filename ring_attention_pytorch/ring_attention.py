@@ -4,7 +4,7 @@ from typing import Tuple
 import torch
 from torch import nn, einsum, Tensor
 import torch.nn.functional as F
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 from torch.nn import Module, ModuleList
 
 from einops import rearrange, repeat
@@ -125,7 +125,7 @@ class RingRotaryEmbedding(Module):
     def is_cuda(self):
         return self.inv_freq.is_cuda
 
-    @autocast(enabled = False)
+    @autocast('cuda', enabled = False)
     @beartype
     def forward(
         self,
@@ -161,7 +161,7 @@ def rotate_half(x):
     x1, x2 = x.chunk(2, dim = -1)
     return torch.cat((-x2, x1), dim=-1)
 
-@autocast(enabled = False)
+@autocast('cuda', enabled = False)
 def apply_rotary_pos_emb(pos, t):
     pos = rearrange(pos, 'n d -> n 1 d')
     return t * pos.cos() + rotate_half(t) * pos.sin()
