@@ -47,8 +47,7 @@ def zig_zag_shard(t, all_gather_batch = False):
     rank, world_size = get_rank(), get_world_size()
 
     if all_gather_batch:
-        all_gather = AllGather(dim = 0)
-        t, gather_sizes = all_gather(t)
+        t, gather_sizes = AllGather(dim = 0)(t)
 
     chunks = 2 * world_size
     t = t.chunk(chunks, dim = -2)
@@ -61,11 +60,10 @@ def zig_zag_shard(t, all_gather_batch = False):
 
     def inverse(two_chunks):
 
-        two_chunks = rearrange(two_chunks, '... (two n) d -> ... two n d', two = 2)
-        all_gather = AllGather(dim = -2)
-        all_chunks, _ = all_gather(two_chunks)
+        two_chunks = rearrange(two_chunks, '... (two chunk_size) d -> ... two chunk_size d', two = 2)
+        all_chunks, _ = AllGather(dim = -3)(two_chunks)
 
-        first_half, second_half = rearrange(all_chunks, '... two n d -> two ... n d')
+        first_half, second_half = rearrange(all_chunks, '... (num_chunks two) chunk_size d -> two ... (num_chunks chunk_size) d', two = 2)
 
         out = torch.cat((first_half, second_half.flip(dims = (-2,))), dim = -2)
 
