@@ -5,12 +5,15 @@ from math import ceil
 import torch
 import torch.multiprocessing as mp
 import torch.distributed as dist
+from torch.amp import autocast
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from ring_attention_pytorch import RingAttention
 from ring_attention_pytorch.distributed import all_gather_variable_dim
 
 from einops import rearrange
+
+from ring_attention_pytorch.ring_attention import apply_rotary_pos_emb
 
 from ring_attention_pytorch.zig_zag_attention import (
     zig_zag_pad_seq,
@@ -50,6 +53,7 @@ def start(
     num_grouped_query_heads,
     dim_head,
     use_cuda,
+    rotary
 ):
     setup(rank, world_size, use_cuda)
 
@@ -59,7 +63,7 @@ def start(
         heads = heads,
         num_grouped_query_heads = num_grouped_query_heads,
         causal = True,
-        rotary_embed = False,
+        rotary_embed = rotary,
         ring_attn = False,
         use_cuda_kernel = use_cuda
     )
@@ -99,7 +103,17 @@ def start(
 
     q, k, v = rearrange(qkv, 'b n (h d) -> b h n d', d = dim_head).split(attention.qkv_head_breakdown, dim = -3)
 
+    if rotary:
+        pos_emb = attention.rotary_embed(q_indices)
+
+        q = apply_rotary_pos_emb(pos_emb, q, head_dim_first = True)
+        k = apply_rotary_pos_emb(pos_emb, k, head_dim_first = True)
+
+    # causal mask
+
     causal_mask = q_indices[:, None] >= kv_indices[None, :]
+
+    # attention
 
     o = zig_zag_attn(
         q, k, v,
@@ -147,6 +161,7 @@ def start(
 @click.option('--num-sharded-batches', default = 1, help = 'number of sharded batches')
 @click.option('--batch-size-var-len', is_flag = True, help = 'test variable lengthed batch sizes')
 @click.option('--use-cuda', is_flag = True, help = 'whether to test with CUDA and NCCL')
+@click.option('--rotary', is_flag = True, help = 'whether to test with rotary embeddings')
 @click.option('--seq-len', default = 31, help = 'sequence length to test')
 @click.option('--model-dim', default = 8, help = 'model dimensions for testing')
 @click.option('--heads', default = 8, help = 'number of query attention heads')
@@ -158,6 +173,7 @@ def test(
     num_sharded_batches: int,
     batch_size_var_len: bool,
     use_cuda: bool,
+    rotary: bool,
     seq_len: int,
     model_dim: int,
     heads: int,
@@ -179,6 +195,7 @@ def test(
             num_grouped_query_heads,
             dim_head,
             use_cuda,
+            rotary
         ),
         nprocs = world_size,
         join = True
