@@ -4,7 +4,7 @@ from typing import Tuple
 import torch
 from torch import nn, einsum, Tensor
 import torch.nn.functional as F
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 from torch.nn import Module, ModuleList
 
 from einops import rearrange, repeat
@@ -125,33 +125,36 @@ class RingRotaryEmbedding(Module):
     def is_cuda(self):
         return self.inv_freq.is_cuda
 
-    @autocast(enabled = False)
+    @autocast('cuda', enabled = False)
     @beartype
     def forward(
         self,
-        seq_len: int
+        seq: int | Tensor
     ):
         device = self.device
 
         pos = None
+        if torch.is_tensor(seq):
+            pos = seq
 
-        if self.ring:
-            if self.striped:
-                buckets = 1 if self.is_cuda else self.buckets
-                ring_stride = get_world_size() * buckets
+        if not exists(pos):
+            if self.ring:
+                if self.striped:
+                    buckets = 1 if self.is_cuda else self.buckets
+                    ring_stride = get_world_size() * buckets
 
-                pos = torch.arange(seq_len // buckets, device = device)
-                pos = repeat(pos, 'n -> n b', b = buckets)
+                    pos = torch.arange(seq // buckets, device = device)
+                    pos = repeat(pos, 'n -> n b', b = buckets)
 
-                pos = pos * ring_stride
-                pos += torch.arange(buckets, device = device) + (get_rank() * buckets)
-                pos = rearrange(pos, 'n b -> (b n)')
+                    pos = pos * ring_stride
+                    pos += torch.arange(buckets, device = device) + (get_rank() * buckets)
+                    pos = rearrange(pos, 'n b -> (b n)')
 
+                else:
+                    pos = torch.arange(seq, device = device)
+                    pos += seq * get_rank()
             else:
-                pos = torch.arange(seq_len, device = device)
-                pos += seq_len * get_rank()
-        else:
-            pos = torch.arange(seq_len, device = device)
+                pos = torch.arange(seq, device = device)
 
         pos = pos.type_as(self.inv_freq)
         freqs = einsum('i , j -> i j', pos, self.inv_freq)
@@ -161,9 +164,11 @@ def rotate_half(x):
     x1, x2 = x.chunk(2, dim = -1)
     return torch.cat((-x2, x1), dim=-1)
 
-@autocast(enabled = False)
-def apply_rotary_pos_emb(pos, t):
-    pos = rearrange(pos, 'n d -> n 1 d')
+@autocast('cuda', enabled = False)
+def apply_rotary_pos_emb(pos, t, head_dim_first = False):
+    if not head_dim_first:
+        pos = rearrange(pos, 'n d -> n 1 d')
+
     return t * pos.cos() + rotate_half(t) * pos.sin()
 
 # batch to sequence sharding and back

@@ -125,3 +125,5 @@ def split_by_rank(x):
 
     sizes = torch.tensor(sizes, device = out.device, dtype = torch.long)
     return out, sizes
+
+all_gather = AllGatherFunction.apply
