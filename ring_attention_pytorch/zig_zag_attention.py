@@ -1,4 +1,5 @@
 from math import ceil
+from collections import namedtuple
 
 import torch
 from torch import nn, tensor
@@ -45,18 +46,38 @@ def zig_zag_pad_seq(t):
 
 # zig zag sharding and its inverse
 
+ShardOutput = namedtuple('ShardOutput', [
+    'local_sequence',
+    'query_positions',
+    'key_value_positions'
+])
+
 def zig_zag_shard(t, all_gather_batch = False):
+    device, seq_len = t.device, t.shape[-2]
     rank, world_size = get_rank(), get_world_size()
 
     if all_gather_batch:
         t, gather_sizes = AllGather(dim = 0)(t)
 
     chunks = 2 * world_size
+    chunk_size = seq_len // chunks
+
     t = t.chunk(chunks, dim = -2)
 
     # each rank takes care of two chunks for their simple workload balancing scheme
 
-    two_chunks = torch.cat((t[rank], t[chunks - 1 - rank]), dim = -2)
+    two_chunks = torch.cat((t[rank], t[chunks - 1 - rank]), dim = -2).contiguous()
+
+    # take care of positions
+
+    pos = torch.arange(seq_len, device = device)
+
+    pos = rearrange(pos, '(n chunk_size) -> n chunk_size', chunk_size = chunk_size)
+    pos_first_half, pos_second_half = pos.chunk(2, dim = -2)
+    pos = torch.stack((pos_first_half, pos_second_half.flip(dims = (-2,))), dim = -2)
+
+    q_indices = rearrange(pos[rank], '... -> (...)')
+    kv_indices = rearrange(pos, '... -> (...)')
 
     # inverse
 
@@ -76,7 +97,7 @@ def zig_zag_shard(t, all_gather_batch = False):
 
         return out
 
-    return two_chunks.contiguous(), inverse
+    return ShardOutput(two_chunks, q_indices, kv_indices), inverse
 
 # zigzag attention
 # the context parallelism scheme used to train llama 3 https://arxiv.org/abs/2407.21783
@@ -85,7 +106,8 @@ def zig_zag_attn(
     q: Float['b qh i dq'],
     k: Float['b h j dq'],
     v: Float['b h j dv'],
-    dropout: float = 0.
+    dropout = 0.,
+    attn_mask = None
 ) -> Float['b qh i dv']:
 
     twice_chunk_size, device = q.shape[-2], q.device
@@ -107,34 +129,12 @@ def zig_zag_attn(
 
     k, v = tuple(repeat(t, 'b h n d -> b (g h) n d', g = q_head_groups) for t in (k, v))
 
-    # masking
-    # todo - handle specialized masking, and leverage flex attention if cuda
-
-    chunk_size = twice_chunk_size // 2
-    world_size, rank = get_world_size(), get_rank()
-
-    mask_value = -torch.finfo(q.dtype).max
-    seq_len = k.shape[-2]
-
-    full_causal_mask = torch.ones((seq_len, seq_len), dtype = torch.bool, device = device).triu(1)
-    forward_causal_mask, reverse_causal_mask = rearrange(full_causal_mask, '(i c1) (two j c2) -> two i c1 j c2', c1 = chunk_size, c2 = chunk_size, two = 2)
-
-    chunked_causal_mask = rearrange([
-        forward_causal_mask,
-        reverse_causal_mask.flip(dims = (-2,))
-    ] ,'two i c1 j c2 -> i c1 (j two c2)')
-
-    causal_mask = torch.cat((
-        chunked_causal_mask[rank],
-        chunked_causal_mask[(2 * world_size) - 1 - rank]
-    ), dim = -2)
-
     # similarity
 
     out = F.scaled_dot_product_attention(
         q, k, v,
         dropout_p = dropout,
-        attn_mask = ~causal_mask
+        attn_mask = attn_mask
     )
 
     return out

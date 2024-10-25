@@ -93,13 +93,18 @@ def start(
     # zig zag
 
     padded_inp, remove_pad = zig_zag_pad_seq(zig_zag_input)
-    padded_inp, gather_seq = zig_zag_shard(padded_inp, all_gather_batch = True)
+    (padded_inp, q_indices, kv_indices), gather_seq = zig_zag_shard(padded_inp, all_gather_batch = True)
 
     qkv = attention.to_qkv(padded_inp)
 
     q, k, v = rearrange(qkv, 'b n (h d) -> b h n d', d = dim_head).split(attention.qkv_head_breakdown, dim = -3)
 
-    o = zig_zag_attn(q, k, v)
+    causal_mask = q_indices[:, None] >= kv_indices[None, :]
+
+    o = zig_zag_attn(
+        q, k, v,
+        attn_mask = causal_mask
+    )
 
     o = rearrange(o, 'b h n d -> b n (h d)')
 
