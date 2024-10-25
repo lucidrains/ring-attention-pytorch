@@ -84,11 +84,11 @@ def zig_zag_shard(t, all_gather_batch = False):
 def zig_zag_attn(
     q: Float['b qh i dq'],
     k: Float['b h j dq'],
-    v: Float['b h j dv']
+    v: Float['b h j dv'],
+    dropout: float = 0.
 ) -> Float['b qh i dv']:
 
     twice_chunk_size, device = q.shape[-2], q.device
-    q = q * (q.shape[-1] ** -0.5)
 
     # account for grouped query attention
 
@@ -107,10 +107,6 @@ def zig_zag_attn(
 
     k, v = tuple(repeat(t, 'b h n d -> b (g h) n d', g = q_head_groups) for t in (k, v))
 
-    # similarity
-
-    sim = einsum(q, k, 'b h i d, b h j d -> b h i j')
-
     # masking
     # todo - handle specialized masking, and leverage flex attention if cuda
 
@@ -118,7 +114,7 @@ def zig_zag_attn(
     world_size, rank = get_world_size(), get_rank()
 
     mask_value = -torch.finfo(q.dtype).max
-    seq_len = sim.shape[-1]
+    seq_len = k.shape[-2]
 
     full_causal_mask = torch.ones((seq_len, seq_len), dtype = torch.bool, device = device).triu(1)
     forward_causal_mask, reverse_causal_mask = rearrange(full_causal_mask, '(i c1) (two j c2) -> two i c1 j c2', c1 = chunk_size, c2 = chunk_size, two = 2)
@@ -133,14 +129,12 @@ def zig_zag_attn(
         chunked_causal_mask[(2 * world_size) - 1 - rank]
     ), dim = -2)
 
-    sim = torch.where(causal_mask, mask_value, sim)
+    # similarity
 
-    # attend
-
-    attn = sim.softmax(dim = -1)
-
-    # aggregate
-
-    out = einsum(attn, v, 'b h i j, b h j d -> b h i d')
+    out = F.scaled_dot_product_attention(
+        q, k, v,
+        dropout_p = dropout,
+        attn_mask = ~causal_mask
+    )
 
     return out
