@@ -231,10 +231,10 @@ def _fwd_kernel(
 
             bias = bias.to(tl.float32)
             qk = qk * softmax_scale + bias
-            m_ij = tl.maximum(tl.max(qk, 1), lse_i)
+            m_ij = tl.maximum(tl.max(qk, 1), m_i)
             p = tl.exp(qk - m_ij[:, None])
         else:
-            m_ij = tl.maximum(tl.max(qk, 1) * softmax_scale, lse_i)
+            m_ij = tl.maximum(tl.max(qk, 1) * softmax_scale, m_i)
             p = tl.exp(qk * softmax_scale - m_ij[:, None])
 
         l_ij = tl.sum(p, 1)
